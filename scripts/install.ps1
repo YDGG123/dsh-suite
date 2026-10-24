@@ -21,10 +21,35 @@ param(
     [switch]$VerifyOnly,
     [switch]$DryRun,
     [string]$Profile = "",
-    [string]$DshHome = ""
+    [string]$DshHome = "",
+    [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
+
+# -Help：只打印用法后退出 0。**必须在任何预检/落盘之前**——安装指南的第一步就是
+# `install.ps1 -Help`（AI 靠它确认参数拼写），这里若有副作用，那扇门就塌了。
+if ($Help) {
+  Write-Host @"
+dsh-suite 一键安装（Windows）
+
+用法：
+  powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [选项]
+
+选项：
+  -OnlyGateway     只装移动网关（最小组合：手机能聊天/看会话）
+  -OnlyDsBot       只装 ds-bot fork（桌面 Bot 团队增强：实时状态、群聊卡片）
+  -VerifyOnly      只校验已安装结果，不改任何文件
+  -DryRun          只打印计划，不落盘
+  -Profile <名称>  DSH profile 名，默认 desktop（不存在则取第一个）
+  -DshHome <路径>  DSH 数据目录，默认 %USERPROFILE%\.dsh
+  -Help            显示这段说明并退出（不做任何改动）
+
+退出码：0 成功 / 1 预检失败 / 2 安装失败 / 3 校验失败 / 4 参数或环境不支持
+输出锚点（脚本/文档可依赖）：backup: <备份目录>；CHECK gateway|dsbot: PASS|FAIL；RESULT: PASS|FAIL
+"@
+  exit 0
+}
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $GatewayName = 'dsh-plugin-mobile-gateway'

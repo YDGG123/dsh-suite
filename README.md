@@ -38,10 +38,13 @@ app/                          # 未签名 IPA（TrollStore 直接装）
 plugins/
   dsh-plugin-mobile-gateway/  # 网关插件（含产物，装完即用；无需 npm/构建）
   ds-bot/                     # ds-bot fork（含 client.js 产物）
+  _runtime-deps/              # 网关的运行依赖（ws / qrcode / schemastery），宿主缺时才补装
+  manifest.json               # 关键文件 sha256（安装脚本用它校验“复制是否完整”）
 scripts/
-  install.ps1 / install.sh    # 一键装插件（含备份+校验+选装参数）
-  rollback.ps1 / rollback.sh  # 一键回滚
-  sync-from-dev.sh            # 维护者：从开发仓库同步新版本
+  install.ps1 / install.sh    # 一键装插件（备份 → 复制 → 补依赖 → 写配置 → 逐项校验）
+  rollback.ps1 / rollback.sh  # 一键回滚（按安装前的备份还原）
+  selftest.sh                 # 反向测试：5 种坏情况必须“红”（维护者/CI 用）
+  sync-from-dev.sh            # 维护者：从开发仓库同步新版本并重建 manifest
 docs/
   INSTALL.md                  # 安装指南（AI 可照读执行）
 ```

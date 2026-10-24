@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-10-24T12:50:53.416Z",
+  "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
+  "dshPluginMobileGateway": {
+    "lib/index.mjs": "7c1837dbfa940c311c89108380743c184ed5ba03038eff0060c4b1802df25385",
+    "lib/mobile-v1/team-feed.mjs": "88abeb09588db4d8be69bd50a94a73e830208d94b9abcd792e523265769e1dc3",
+    "lib/mobile-v1/card-frames.mjs": "b1f3e5956fde69315bf7caa7a7111223dc92f86a7401b5dde14ace05a34a9cbf",
+    "lib/mobile-v1/server.mjs": "3c387215c1f896a2c8beadca8d571df7c30a3009ff15a0a680933be8342ffd1e",
+    "lib/mobile-v1/auth.mjs": "108ce9b43fa1b45e1102aaeabccec61831a6f3a33e28fd3982b1f391f1da19b8",
+    "lib/extra-routes.mjs": "6210d20ec31d0d8d443be4ef241b81549abdbfeb2cebbdf0f0fccb454cd0db14"
+  },
+  "dsBot": {
+    "index.js": "0521ec0dd13c6f0d269ddbea5ecba2147ccdbbd4f0888db9caf838ab99a74055",
+    "client.js": "c53ab643e142b92fba9134f1ec1392399d7822b53b7c158dab63be6eb690d9fa",
+    "src/host/team-feed.js": "f303a3333e8e7681f27f441bc54b1423dd01146575eb019b344e6df4a1a9c31d",
+    "src/host/card-feed.js": "240cf315cc24e285a181e72f2b0237b23aff340594d1cf2a0d77c906978fed6c",
+    "src/host/room-cards.js": "902a719a2d21aeb9fed199da1ca1501edb02ef36564b96bcbb0b961ff4699423",
+    "src/host/tools.js": "57e7444bf32681757df63d9672ceeda87be290ab5d8bf5e0547d82d1d3cf05de"
+  },
+  "_runtimeDeps": {
+    "ws": {
+      "version": "8.22.0",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "qrcode": {
+      "version": "1.5.4",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "@deepseek-ai/schemastery": {
+      "version": "3.18.5",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "pngjs": {
+      "version": "5.0.0",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "dijkstrajs": {
+      "version": "1.0.3",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "@standard-schema/spec": {
+      "version": "1.1.0",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    },
+    "@deepseek-ai/cosmokit": {
+      "version": "1.8.6",
+      "source": "与宿主同源（DeepSeek Harness 自带树逐字节复制）"
+    }
+  },
+  "ipa": {
+    "name": "DshMobile-iOS16-v1.7.8-29.unsigned.ipa",
+    "sha256": "5f8ae6a7e46dc0020eb00baca635ee42428897ac828e55a994095535124dd39f"
+  }
+}

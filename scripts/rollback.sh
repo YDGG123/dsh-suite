@@ -311,12 +311,15 @@ else
     say "  ! 备份里没有 cordis.patch.yml，跳过"
   fi
 
-  # state.txt 里 `new:` 表示安装前没有这个目录 → 回滚时删掉；`had:` 表示原来有 → 保留当前目录并提示
+  # state.txt 里 `new:` 表示安装前没有这个目录 → 回滚时删掉；`had:` 表示原来有 → 保留当前目录并提示。
+  # 网关是升级（had:）时，它补装的运行依赖也不删：保留的目录要用它们。
+  had_gateway=0
+  grep -qx "had:$GATEWAY_NAME" "$BACKUP/state.txt" 2>/dev/null && had_gateway=1
   while IFS= read -r line; do
     case "$line" in
       new:*) name="${line#new:}"; rm -rf "$MODULES/$name" && ok "移除安装时新增的目录：$name";;
       had:*) name="${line#had:}"; warn "$name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复";;
-      new-dep:*) dep="${line#new-dep:}"; rm -rf "$MODULES/$dep" && ok "移除补装的运行依赖：$dep";;
+      new-dep:*) dep="${line#new-dep:}"; [ "$had_gateway" -eq 1 ] || { rm -rf "$MODULES/$dep" && ok "移除补装的运行依赖：$dep"; };;
       had-dep:*) : ;;
     esac
   done < "$BACKUP/state.txt"

@@ -294,7 +294,9 @@ if ($Single) {
         Say '  ! 备份里没有 cordis.patch.yml，跳过'
     }
 
-    # state.txt：new:* 表示安装前没有 → 删掉；had:* 表示原来有 → 保留当前目录并提示自备旧版
+    # state.txt：new:* 表示安装前没有 → 删掉；had:* 表示原来有 → 保留当前目录并提示。
+    # 网关是升级（had:）时，它补装的运行依赖也不删：保留的目录要用它们。
+    $hadGateway = Test-PluginHad $GatewayName
     foreach ($line in (Get-Content -LiteralPath $stateFile -Encoding ASCII)) {
         $line = $line.TrimEnd("`r")
         if ($line -like 'new:*') {
@@ -308,11 +310,13 @@ if ($Single) {
             $name = $line.Substring(4)
             Say "  ! $name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复"
         } elseif ($line -like 'new-dep:*') {
-            $dep = $line.Substring(8)
-            $target = & $Join $Modules $dep
-            if (Test-Path -LiteralPath $target) {
-                Remove-Item -LiteralPath $target -Recurse -Force
-                Ok "移除补装的运行依赖：$dep"
+            if (-not $hadGateway) {
+                $dep = $line.Substring(8)
+                $target = & $Join $Modules $dep
+                if (Test-Path -LiteralPath $target) {
+                    Remove-Item -LiteralPath $target -Recurse -Force
+                    Ok "移除补装的运行依赖：$dep"
+                }
             }
         }
     }

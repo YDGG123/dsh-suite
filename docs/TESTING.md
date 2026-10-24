@@ -73,9 +73,9 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
   ✓ R13 装两次后只撤网关：升级场景，目录/依赖/原有配置块都保留，只还原登记
   ✓ R12b 用户块紧跟安装块：只撤我们那块，用户块仍在、只剩 1 块
   ✓ R14 had 场景：目录保留、提示明确、登记还原为 0.2.0
-  ✓ R15 整份回滚：had 目录保留、new 插件仍撤
+  ✓ R15 整份回滚：had 目录与它的运行依赖都保留、new 插件仍撤
 
-== 结果：通过 56 条，失败 0 条 ==
+== 结果：通过 57 条，失败 0 条 ==
 （退出码 0）
 ```
 
@@ -87,10 +87,11 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | B 单撤网关时连 ds-bot 一起删 | 去掉 `WANT_DSBOT` 条件，直接 `remove_plugin_dir ds-bot` | selftest exit 1：R7 ds-bot 目录不见了 / 校验退出 3，R8 也没有 ds-bot |
 | C 整份回滚不还原 package.json | 注释掉 `cp -p "$BACKUP/package.json" …` | selftest exit 1：R10 package.json 与备份内容不同 |
 | D 收窄失效（旧版过宽的块识别） | 守卫改成 `grep -qE mobile-gateway`，且 `- id: mobile-gateway` 也当块首 | selftest exit 1：R12 用户配置块被误删（逐字节不一致、文本找不到） |
-| E 跳过区间不区分第几个 `- id:` | 去掉 `seenid` 守卫，恢复成“见到 `- id: mobile-gateway` 就继续跳过” | selftest exit 1：R12b 用户块被吞（块数量 0） |
+| E 跳过区间不区分第几个 `- id:` | 去掉 `seenid` 守卫，恢复成“见到 `- id: mobile-gateway` 就继续跳过” | selftest exit 1：R12b 用户块被吞（只剩 0 块、`lanPort` 找不到），2 条红 |
 | F had: 保留目录失效 | 删掉 `remove_plugin_dir` 里 `had → 保留并 return` 的早退 | selftest exit 1：R13/R14 的 had 目录不见了（期望仍在），共 4 条红 |
+| G 整份回滚把 had 依赖也删了 | 去掉 `had_gateway` 守卫，`new-dep:` 无条件 `rm -rf` | selftest exit 1：R15 的运行依赖（ws）不见了 |
 
-每条变异只红对应用例；还原后 selftest 复跑 56/0、exit 0。
+每条变异只红对应用例；还原后 selftest 复跑 57/0、exit 0。
 
 ### 同日 · 正向路径（假 profile 沙箱，不碰真实环境）
 

@@ -216,6 +216,7 @@ printf 'old gateway\n' > "$P15/node_modules/dsh-plugin-mobile-gateway/OLD.txt"
 env DSH_HOME="$HOME15/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 expect_code "R15 整份回滚（had 场景）" 0 env DSH_HOME="$HOME15/.dsh" bash "$REPO_ROOT/scripts/rollback.sh"
 assert_present "R15 安装前就有的网关目录被保留" "$P15/node_modules/dsh-plugin-mobile-gateway"
+assert_present "R15 它的运行依赖也保留" "$P15/node_modules/ws"
 assert_absent  "R15 ds-bot（new:）仍被撤掉" "$P15/node_modules/ds-bot"
 
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"

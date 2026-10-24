@@ -103,7 +103,7 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | F had: 保留目录失效 | 删掉 `remove_plugin_dir` 里 `had → 保留并 return` 的早退 | selftest exit 1：R13/R14 的 had 目录不见了（期望仍在），共 4 条红 |
 | G 整份回滚把 had 依赖也删了 | 去掉 `had_gateway` 守卫，`new-dep:` 无条件 `rm -rf` | selftest exit 1：R15 的运行依赖（ws）不见了 |
 
-每条变异只红对应用例；还原后 selftest 复跑 57/0、exit 0。
+每条变异只红对应用例；还原后 selftest 复跑 82/0、exit 0。
 
 ### 同日 · 同步脚本（`sync-from-dev.sh`）的闸门自证
 

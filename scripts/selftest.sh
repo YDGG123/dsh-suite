@@ -22,6 +22,8 @@
 #   R17 漏传 --ipa                                     → 参数非法，退出码 2（不许静默沿用旧 sha）
 #   R18 相对路径 --gateway                             → 按调用者 cwd 解析并成功同步
 #   R19 换新 IPA 后自动改写文档                        → 8 处更新、旧值 0 命中、自检通过
+#   R20 先 --no-ipa 再换包                             → 文档仍能自动改写（旧值从 app 的包推出）
+#   R21 输出锚点四行                                  → INSTALL 写明且两个 install 脚本真的打印
 #
 # 用法：bash scripts/selftest.sh
 set -uo pipefail
@@ -269,9 +271,9 @@ assert_no_text "R19 旧名 0 命中" "$FAKE19/README.md" "DshMobile-iOS16-v1.7.8
 assert_no_text "R19 旧 sha 0 命中" "$FAKE19/docs/INSTALL.md" "5f8ae6a7e46dc0020eb00baca635ee42428897ac828e55a994095535124dd39f"
 expect_code "R19 改完后文档自检通过" 0 bash "$FAKE19/scripts/sync-from-dev.sh" --check-docs
 
-# R20b：--no-ipa 之后 manifest.ipa 是 null，文档仍描述 app 里的旧包。下一轮带新 IPA 时，
-#       旧名/旧 sha/旧大小必须从 app 里那个旧包推出来，文档照样改对（否则会留着旧信息）。
-#       独立目录（repo20b）：与上一段共用会把 app/ 拷成双包，撞“只能一个 IPA”的保护。
+# R20：--no-ipa 之后 manifest.ipa 是 null，文档仍描述 app 里的旧包。下一轮带新 IPA 时，
+#      旧名/旧 sha/旧大小必须从 app 里那个旧包推出来，文档照样改对（否则会留着旧信息）。
+#      用独立目录（repo20b），不与其他用例共用 app/（共用会拷成双包，撞“只能一个 IPA”）。
 FAKE20B="$SANDBOX/repo20b"
 fake_repo "$FAKE20B"
 expect_code "R20 --no-ipa 同步（应成功）" 0 bash "$FAKE20B/scripts/sync-from-dev.sh" --gateway "$SANDBOX/gwsrc" --no-ipa

@@ -74,7 +74,7 @@ $PluginsDir = & $Join $RepoRoot 'plugins'
 if (-not (Test-Path -LiteralPath $PluginsDir -PathType Container)) {
     Die 1 "找不到 plugins 目录，请在仓库根目录运行（当前：$RepoRoot）"
 }
-if ($WantGateway -and -not (Test-Path -LiteralPath (& $Join (& $Join $PluginsDir $GatewayName) 'lib\index.mjs'))) {
+if ($WantGateway -and -not (Test-Path -LiteralPath (& $Join (& $Join $PluginsDir $GatewayName) 'lib/index.mjs'))) {
     Die 1 "仓库缺少 plugins\$GatewayName\lib\index.mjs（仓库不完整，请重新下载）"
 }
 if ($WantDsBot -and -not (Test-Path -LiteralPath (& $Join (& $Join $PluginsDir $DsBotName) 'index.js'))) {
@@ -247,7 +247,7 @@ function Check-Hash([string]$File, [string]$Expect, [string]$Label) {
 
 if ($WantGateway) {
     $G = & $Join $Modules $GatewayName
-    foreach ($rel in @('lib\index.mjs', 'lib\mobile-v1\team-feed.mjs', 'lib\mobile-v1\card-frames.mjs', 'lib\mobile-v1\server.mjs')) {
+    foreach ($rel in @('lib/index.mjs', 'lib/mobile-v1/team-feed.mjs', 'lib/mobile-v1/card-frames.mjs', 'lib/mobile-v1/server.mjs')) {
         if (-not (Test-Path -LiteralPath (& $Join $G $rel))) { Fail "网关缺文件：$rel" }
     }
     if ($Manifest -and $Manifest.dshPluginMobileGateway) {
@@ -263,17 +263,17 @@ if ($WantGateway) {
 
 if ($WantDsBot) {
     $D = & $Join $Modules $DsBotName
-    foreach ($rel in @('index.js', 'client.js', 'src\host\team-feed.js', 'src\host\card-feed.js', 'src\host\room-cards.js')) {
+    foreach ($rel in @('index.js', 'client.js', 'src/host/team-feed.js', 'src/host/card-feed.js', 'src/host/room-cards.js')) {
         if (-not (Test-Path -LiteralPath (& $Join $D $rel))) { Fail "ds-bot 缺文件：$rel（可能装成了上游原版）" }
     }
-    $hostDir = & $Join $D 'src\host'
+    $hostDir = & $Join $D 'src/host'
     if (Test-Path -LiteralPath $hostDir) {
         $cards = @(Get-ChildItem -LiteralPath $hostDir -Recurse -File | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue) -match 'dsBotCards' }).Count
         if ($cards -lt 1) { Fail 'ds-bot 没有 dsBotCards 服务（装成了上游原版？手机团队页/卡片会缺失）' }
         $roster = @(Get-ChildItem -LiteralPath $hostDir -Recurse -File | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue) -match 'teamFeed' }).Count
         if ($roster -lt 1) { Fail 'ds-bot 没有 teamFeed（名册发布缺失，手机团队页只会是降级名册）' }
     } else {
-        Fail 'ds-bot 缺 src\host 目录（可能装成了上游原版）'
+        Fail 'ds-bot 缺 src/host 目录（可能装成了上游原版）'
     }
     if ($Manifest -and $Manifest.dsBot) {
         foreach ($prop in $Manifest.dsBot.PSObject.Properties) {
@@ -295,7 +295,7 @@ if (-not $VerifyOnly) {
     if ($WantDsBot -and ($pkgText -notmatch [regex]::Escape('"' + $DsBotName + '"'))) { Fail "package.json 里没有登记 $DsBotName" }
 }
 
-if ($VerifyFail) { Die 3 '校验未通过（看上面 X 的项）。可用 scripts\rollback.ps1 还原' }
+if ($VerifyFail) { Die 3 '校验未通过（看上面 X 的项）。可用 scripts/rollback.ps1 还原' }
 
 # ---------- 5. 完成 ----------
 Say ''

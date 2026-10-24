@@ -97,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -OnlyGateway
 
 macOS：`bash scripts/install.sh --only-gateway`
 
-- **预期输出**：出现 `dsh-plugin-mobile-gateway` 的"已安装/已启用"，并打印备份路径，**没有红色报错**
+- **预期输出**：**退出码 0**，输出里有 `1/5 预检` … `5/5 完成`，末尾是 `下一步：` 三段。逐字骨架见 [2.4](#24-装完自证ai-必读退出码--预期输出骨架)
 - **失败**：
   - 提示"禁止运行脚本" → 就用上面这行（`-ExecutionPolicy Bypass` 只对本次生效）
   - 提示找不到文件 → 确认当前目录是仓库根目录（`dir` 能看到 `scripts`）
@@ -132,6 +132,56 @@ macOS：`bash scripts/install.sh --only-dsbot`
   - 增强组合：**额外**有 `ds-bot`
   - 两者都没有"加载失败/错误"标记
 - **失败**：列表里没有 → 回看 1.1 版本、2.1/2.2 的输出；仍不出现 → [2.5](#25-失败兜底手动安装脚本不可用时)
+
+### 2.4 装完自证（AI 必读：退出码 + 预期输出骨架）
+
+**先看退出码——这是最硬的判据，别靠"看起来没报错"：**
+
+| 退出码 | 含义 | 该做什么 |
+|---|---|---|
+| `0` | 成功 | 进下一步（§2.3 重启） |
+| `1` | 预检失败（目录/版本/工具缺失） | 按输出提示补齐，**一个文件都没动**，可修好直接重跑 |
+| `2` | 安装/复制失败 | 跑 `rollback`（§7）后重试 |
+| `3` | **校验失败**（文件不全/哈希不符/依赖缺失） | 跑 `rollback` 后重试；仍失败 → 反馈 |
+| `4` | 环境不支持 | 停止，反馈（不要手改文件绕过） |
+
+Windows 取退出码：`echo $LASTEXITCODE`；macOS：`echo $?`。
+
+**真装时的输出骨架**（macOS 实测于 2026-10-25；Windows 文字一致）：
+
+```
+== 1/5 预检 ==
+  ✓ DSH 数据目录：<你的 .dsh 路径>
+  ✓ 目标 profile：desktop（<…>/profiles/desktop）
+== 2/5 备份 ==
+  （打印备份目录：…/profiles/<profile>/backups/dsh-suite-<YYYYMMDD-HHMMSS>）← 记下它，回滚要用
+== 3/5 安装插件 ==
+== 4/5 校验 ==
+  ✓ 网关：文件齐全、哈希与仓库一致、运行依赖在位
+  ✓ ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards
+== 5/5 完成 ==
+  已安装：移动网关 ds-bot
+  下一步：
+    1) 完全退出 DeepSeek Harness 再重新打开（插件在启动时加载）
+    2) 设置 → 插件，确认上面这两个插件出现且已启用
+    3) 设置 → 移动网关：按 docs/INSTALL.md 第 4 步生成配对码，手机扫码
+```
+
+> 只装了网关（`-OnlyGateway`）时，`4/5 校验` 里**只有网关那一行**，`已安装：` 里也只有「移动网关」——**这是正常的**，不是漏装。
+
+**一条命令自证"到底装好了没有"**（我实测：退出码 0 + 两行 `✓`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -VerifyOnly
+```
+```bash
+bash scripts/install.sh --verify-only
+```
+
+> **Windows 用户先干跑一次**：`install.ps1` 的参数与逻辑与 macOS 同源，但**尚未在真实 Windows 环境执行过**（作者自述）。所以：
+> 1. 先 `-DryRun`（`--dry-run`）——输出每行以 `(dry-run)` 开头，最后一行是 `5/5 完成（未改动任何文件）`，**不落盘**；
+> 2. 计划符合预期再真跑（去掉 `-DryRun`）；
+> 3. 出问题把完整输出发回（§9 反馈）。
 
 ### 2.5 失败兜底：手动安装（脚本不可用时）
 
@@ -264,24 +314,39 @@ Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
 3. 重启 DeepSeek Harness
 4. 有新 IPA 时按第 3 步重装覆盖（**配对信息保留**）
 
-### 回滚（整份 profile 快照恢复）
+### 回滚（整份快照，或只撤一个插件）
 
 | 目的 | Windows | macOS |
 |---|---|---|
-| 回滚到最近一次备份 | `.\scripts\rollback.ps1` | `bash scripts/rollback.sh` |
+| 回滚到最近一次备份（两个插件都撤） | `.\scripts\rollback.ps1` | `bash scripts/rollback.sh` |
+| 只撤移动网关（ds-bot 原样不动） | `.\scripts\rollback.ps1 -OnlyGateway` | `bash scripts/rollback.sh --only-gateway` |
+| 只撤 ds-bot fork（网关原样不动） | `.\scripts\rollback.ps1 -OnlyDsBot` | `bash scripts/rollback.sh --only-dsbot` |
 | 列出可用备份 | `.\scripts\rollback.ps1 -List` | `bash scripts/rollback.sh --list` |
 | 回滚到指定备份 | `.\scripts\rollback.ps1 -Backup <目录>` | `bash scripts/rollback.sh --backup <目录>` |
 
-- 回滚是**整份快照恢复**：安装脚本每次安装前都会备份一次，回滚会把那次安装新增的插件目录
+参数以脚本自己的帮助输出为准：`bash scripts/rollback.sh --help`、`powershell -File scripts\rollback.ps1 -Help`。
+
+- **整份回滚**：安装脚本每次安装前都会备份一次，回滚会把那次安装新增的插件目录
   与补装的运行依赖一起移除，并还原 `package.json` / `cordis.patch.yml`
-- 想"只回滚其中一个插件"：分两次安装（每次只装一个，各自留下备份），再回滚到目标插件安装前的那份备份
+- **单插件回滚**（`-OnlyGateway` / `-OnlyDsBot`）：只动你点名的那个插件——还原它在 `package.json`
+  的登记（安装前有旧值就写回旧值，没有就删掉这一项）、撤它在 `cordis.patch.yml` 的配置块（只有网关有）、
+  删它的 `node_modules` 目录与它补装的运行依赖；**另一个插件的目录与登记一个字节都不动**（有反向用例钉住）
+  - 运行依赖只随**网关**撤（那 7 个目录属于网关的依赖闭包）；撤 ds-bot **不碰**依赖
+  - 单插件回滚复用同一份备份里的 `state.txt`，**只读不写**：重复执行是安全的，已撤掉的项会被跳过，退出码仍为 0
+  - macOS/Linux 上改 `package.json` 需要 `node` 或 `python3`；两个都没有时**预检直接拒绝（退出码 1）**，一个文件都不动。
+    Windows 走 PowerShell 原生处理，无需额外工具
+  - `package.json` 会被按标准两空格缩进重写（依赖内容不变）；`cordis.patch.yml` 只撤**本安装追加的那一块**
+    （认安装脚本写的那行 `# dsh-suite: 手机连接需要开启…` 注释），**你自己写的 `- id: mobile-gateway` 配置块原样保留**；
+    安装前没有这个文件的，撤完会把文件删掉
+  - 安装前该插件就已存在（`had:`，例如把 npm 原版换成本套）：备份只保存登记、不保存旧版本文件 →
+    脚本会删除当前版本并还原登记，**旧版本要你自己从备份恢复**（与整份回滚同语义）
 - 回滚从**安装时自动做的备份**恢复（备份路径在安装输出里打印过）
-- **回滚 ds-bot 后**：手机仍能聊天，团队页回到降级名册、群里不弹卡 → 预期表现，不是故障
-- **回滚网关后**：手机连不上，重新配对即可
+- **只撤 ds-bot 后**：手机仍能聊天，团队页回到降级名册、群里不弹卡 → 预期表现，不是故障
+- **只撤网关后**：手机连不上，重新配对或重装网关即可；桌面 Bot 团队不受影响
 
 ### 卸载
 
-- **只装过本包**：先 `rollback`，再到 DSH 插件列表里移除对应插件
+- **只装过本包**：先 `rollback`（只想去掉一个插件就用 `-OnlyGateway` / `-OnlyDsBot`），再到 DSH 插件列表里移除对应插件
 - **App**：手机上长按 **Whaleness** 删除即可（巨魔装的应用与普通应用一样删）
 
 ---

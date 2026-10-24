@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # 反向测试：故意把安装/校验/回滚搞坏，确认它们**真的会红**。
 #
-# 只跑绿不算证明——这个脚本在临时 HOME 里造沙箱 profile，跑 5 种坏情况：
-#   R1 装错目录（DSH_HOME 不存在）            → 预检失败，退出码 1
-#   R2 仓库不完整（临时藏起网关 lib/index）    → 预检失败，退出码 1
-#   R3 半装（复制后删掉一个关键文件）          → 校验失败，退出码 3
-#   R4 改一个字节（哈希不符）                  → 校验失败，退出码 3
-#   R5 无备份回滚                              → 拒绝执行，退出码 4
+# 只跑绿不算证明——这个脚本在临时 HOME 里造沙箱 profile，逐条跑：
+#   R1  装错目录（DSH_HOME 不存在）                  → 预检失败，退出码 1
+#   R2  仓库不完整（临时藏起网关 lib/index）          → 预检失败，退出码 1
+#   R3  半装（复制后删掉一个关键文件）                → 校验失败，退出码 3
+#   R4  改一个字节（哈希不符）                        → 校验失败，退出码 3
+#   R5  无备份回滚（整份）                            → 拒绝执行，退出码 4
+#   R6  无备份单插件回滚                              → 拒绝执行，退出码 4
+#   R7  只撤网关：ds-bot 目录逐字节未动、校验仍绿      → 退出码 0（撤错/删多就会红）
+#   R8  单插件回滚重复执行                            → 退出码 0 且打印“已处于回滚状态”
+#   R9  只撤 ds-bot：网关目录/依赖/配置未动、校验仍绿  → 退出码 0（撤错/删多就会红）
+#   R10 整份回滚不受影响                              → package.json / cordis 与备份逐字节一致
+#   R11 -OnlyGateway 与 -OnlyDsBot 同时给             → 参数非法，退出码 4
+#   R12 用户自己的 - id: mobile-gateway 块             → 必须原样保留（误删就红）
+#   R13 装两次再只撤网关                              → 上一轮我们追加的块也要撤掉
 #
 # 用法：bash scripts/selftest.sh
 set -uo pipefail
@@ -27,6 +35,18 @@ expect_code() {
     failn=$((failn+1))
   fi
 }
+
+ok_line() { printf '  ✓ %-46s %s\n' "$1" "${2:-通过}"; pass=$((pass+1)); }
+bad_line() { printf '  ✗ %-46s %s\n' "$1" "${2:-不符}"; failn=$((failn+1)); }
+
+# 目录内容指纹：同样的文件与内容 → 同样的值（用来证明“另一个插件没被动过”）。
+tree_hash() { ( cd "$1" && find . -type f -exec shasum -a 256 {} + | sort | shasum -a 256 | awk '{print $1}' ); }
+assert_same() { local label="$1" want="$2" got="$3"; if [ "$want" = "$got" ]; then ok_line "$label" "一致"; else bad_line "$label" "期望 $want 实际 $got"; fi; }
+assert_absent() { local label="$1" path="$2"; if [ ! -e "$path" ] && [ ! -L "$path" ]; then ok_line "$label" "已撤除"; else bad_line "$label" "仍然存在：$path"; fi; }
+assert_present() { local label="$1" path="$2"; if [ -e "$path" ]; then ok_line "$label" "仍在"; else bad_line "$label" "不见了：$path"; fi; }
+assert_text() { local label="$1" file="$2" needle="$3"; if grep -qF -- "$needle" "$file" 2>/dev/null; then ok_line "$label" "命中"; else bad_line "$label" "没找到：$needle"; fi; }
+assert_no_text() { local label="$1" file="$2" needle="$3"; if grep -qF -- "$needle" "$file" 2>/dev/null; then bad_line "$label" "不该出现：$needle"; else ok_line "$label" "干净"; fi; }
+assert_bytes_same() { local label="$1" a="$2" b="$3"; if cmp -s "$a" "$b"; then ok_line "$label" "逐字节一致"; else bad_line "$label" "内容不同"; fi; }
 
 new_home() {
   local name="$1"
@@ -66,6 +86,89 @@ expect_code "R4 哈希不符（改一个字节）" 3 env DSH_HOME="$HOME4/.dsh" 
 HOME5="$(new_home r5)"
 expect_code "R5 无备份回滚（应拒绝）" 4 env DSH_HOME="$HOME5/.dsh" bash "$REPO_ROOT/scripts/rollback.sh"
 
+printf '\n== 单插件粒度回滚 ==\n'
+
+# R6：无备份的单插件回滚同样必须拒绝
+expect_code "R6 无备份单插件回滚（应拒绝）" 4 env DSH_HOME="$HOME5/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
+
+# R11：两个 -Only 互斥
+expect_code "R11 -Only 互斥（应拒绝）" 4 env DSH_HOME="$HOME5/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway --only-dsbot
+
+# R7 + R8：装两个 → 只撤网关 → ds-bot 原样、校验仍绿；再撤一次必须幂等
+HOME7="$(new_home r7)"
+P7="$HOME7/.dsh/profiles/desktop"
+env DSH_HOME="$HOME7/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+DSBOT_BEFORE="$(tree_hash "$P7/node_modules/ds-bot")"
+expect_code "R7 只撤网关（应成功）" 0 env DSH_HOME="$HOME7/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
+assert_absent  "R7 网关目录已撤" "$P7/node_modules/dsh-plugin-mobile-gateway"
+assert_absent  "R7 网关运行依赖已撤" "$P7/node_modules/ws"
+assert_present "R7 ds-bot 目录仍在" "$P7/node_modules/ds-bot"
+assert_same    "R7 ds-bot 目录逐字节未动" "$DSBOT_BEFORE" "$(tree_hash "$P7/node_modules/ds-bot")"
+assert_no_text "R7 package.json 已撤销网关登记" "$P7/package.json" "dsh-plugin-mobile-gateway"
+assert_text    "R7 package.json 保留 ds-bot 登记" "$P7/package.json" '"ds-bot"'
+assert_no_text "R7 cordis 已撤网关配置块" "$P7/cordis.patch.yml" "- id: mobile-gateway"
+expect_code "R7 只撤网关后 ds-bot 校验仍绿" 0 env DSH_HOME="$HOME7/.dsh" bash "$REPO_ROOT/scripts/install.sh" --only-dsbot --verify-only
+
+env DSH_HOME="$HOME7/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway >"$SANDBOX/r8.log" 2>&1
+assert_same "R8 重复执行退出码" 0 "$?"
+assert_text "R8 打印“已处于回滚状态”" "$SANDBOX/r8.log" "已处于回滚状态"
+assert_present "R8 ds-bot 没有被误删" "$P7/node_modules/ds-bot"
+expect_code "R8 重复执行后 ds-bot 校验仍绿" 0 env DSH_HOME="$HOME7/.dsh" bash "$REPO_ROOT/scripts/install.sh" --only-dsbot --verify-only
+
+# R9：装两个 → 只撤 ds-bot → 网关的目录/依赖/配置都还在、校验仍绿
+HOME9="$(new_home r9)"
+P9="$HOME9/.dsh/profiles/desktop"
+env DSH_HOME="$HOME9/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+GATEWAY_BEFORE="$(tree_hash "$P9/node_modules/dsh-plugin-mobile-gateway")"
+expect_code "R9 只撤 ds-bot（应成功）" 0 env DSH_HOME="$HOME9/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-dsbot
+assert_absent  "R9 ds-bot 目录已撤" "$P9/node_modules/ds-bot"
+assert_present "R9 网关目录仍在" "$P9/node_modules/dsh-plugin-mobile-gateway"
+assert_same    "R9 网关目录逐字节未动" "$GATEWAY_BEFORE" "$(tree_hash "$P9/node_modules/dsh-plugin-mobile-gateway")"
+assert_present "R9 网关运行依赖仍在" "$P9/node_modules/ws"
+assert_no_text "R9 package.json 已撤销 ds-bot 登记" "$P9/package.json" '"ds-bot"'
+assert_text    "R9 package.json 保留网关登记" "$P9/package.json" '"dsh-plugin-mobile-gateway"'
+assert_text    "R9 cordis 配置块未被动" "$P9/cordis.patch.yml" "- id: mobile-gateway"
+expect_code "R9 只撤 ds-bot 后网关校验仍绿" 0 env DSH_HOME="$HOME9/.dsh" bash "$REPO_ROOT/scripts/install.sh" --only-gateway --verify-only
+
+# R10：整份回滚仍是逐字节还原，不受单插件路径影响
+HOME10="$(new_home r10)"
+P10="$HOME10/.dsh/profiles/desktop"
+env DSH_HOME="$HOME10/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+BACKUP10="$(ls -1d "$P10"/backups/dsh-suite-* | tail -1)"
+expect_code "R10 整份回滚（应成功）" 0 env DSH_HOME="$HOME10/.dsh" bash "$REPO_ROOT/scripts/rollback.sh"
+assert_bytes_same "R10 package.json == 备份" "$P10/package.json" "$BACKUP10/package.json"
+assert_bytes_same "R10 cordis == 备份" "$P10/cordis.patch.yml" "$BACKUP10/cordis.patch.yml"
+assert_absent "R10 网关目录已撤" "$P10/node_modules/dsh-plugin-mobile-gateway"
+assert_absent "R10 ds-bot 目录已撤" "$P10/node_modules/ds-bot"
+
+# R12：用户自己写的 `- id: mobile-gateway` 块（没有我们那行注释）绝不能被单插件回滚误删
+HOME12="$(new_home r12)"
+P12="$HOME12/.dsh/profiles/desktop"
+cat > "$P12/cordis.patch.yml" <<'YML'
+# patch
+# 用户自己维护的网关配置：没有 dsh-suite 的注释行
+- id: mobile-gateway
+  name: dsh-plugin-mobile-gateway
+  config:
+    gatewayEnabled: true
+YML
+cp "$P12/cordis.patch.yml" "$SANDBOX/r12.cordis.before"
+env DSH_HOME="$HOME12/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+expect_code "R12 只撤网关（应成功）" 0 env DSH_HOME="$HOME12/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
+assert_bytes_same "R12 用户自己的配置块逐字节保留" "$P12/cordis.patch.yml" "$SANDBOX/r12.cordis.before"
+assert_text "R12 用户自己的块仍在" "$P12/cordis.patch.yml" "- id: mobile-gateway"
+assert_absent "R12 网关目录已撤" "$P12/node_modules/dsh-plugin-mobile-gateway"
+
+# R13：装两次再单撤网关 —— 上一轮也是我们追加的块，必须一起撤掉（不能留指向空目录的配置）
+HOME13="$(new_home r13)"
+P13="$HOME13/.dsh/profiles/desktop"
+env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+expect_code "R13 重装后只撤网关（应成功）" 0 env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
+assert_no_text "R13 本安装追加的块已撤" "$P13/cordis.patch.yml" "- id: mobile-gateway"
+assert_no_text "R13 注释行也已撤" "$P13/cordis.patch.yml" "# dsh-suite: 手机连接需要开启"
+assert_absent "R13 网关目录已撤" "$P13/node_modules/dsh-plugin-mobile-gateway"
+
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"
 [ "$failn" -eq 0 ] || exit 1
-printf '（说明：这 5 条都“红”才说明闸门真实有效；全绿反而说明脚本什么都没检查。）\n'
+printf '（说明：R1–R6、R11 必须“红”，R7–R13 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'

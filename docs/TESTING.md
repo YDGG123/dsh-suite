@@ -9,8 +9,9 @@
 bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱，不碰你真实 profile）
 ```
 
-- 退出码：`0` = 所有反向场景都按预期变红（**这是通过**）；非 0 = 有场景没红或红了但码不对。
+- 退出码：`0` = 所有反向场景都按预期表现（**这是通过**）；非 0 = 有场景没红、红了但码不对，或结构断言（文件/字节/文本）不符。
 - 脚本会在 `mktemp -d` 的临时目录里造一个假 profile，跑完自动清理，**不影响真实 DSH 数据**。
+- R1–R6、R11 是"必须红"的场景；R7–R13 是"正确实现下应当绿、写错就会红"的闸门（撤错插件、删多、误删用户配置、非幂等都会让它们变红）。
 
 ## 反向场景与期望退出码
 
@@ -21,6 +22,14 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | R3 | **半装** | 安装后删掉一个关键文件 | **3** | 校验失败：文件齐全性/哈希不符 |
 | R4 | **哈希不符** | 改动已安装文件的一个字节 | **3** | 校验失败：内容与仓库不一致 |
 | R5 | **无备份回滚** | 在空 profile 上回滚 | **4** | 拒绝执行：没有备份可回滚 |
+| R6 | **无备份单插件回滚** | 空 profile 上 `--only-gateway` | **4** | 同样拒绝：单插件也要有备份与 state.txt |
+| R7 | **只撤网关** | 装两个后 `--only-gateway` | **0** | ds-bot 目录**逐字节未动**、登记保留、`--only-dsbot --verify-only` 仍绿 |
+| R8 | **单插件回滚幂等** | 上一步再跑一次 | **0** | 打印"已处于回滚状态"，不误删 ds-bot，校验仍绿 |
+| R9 | **只撤 ds-bot** | 装两个后 `--only-dsbot` | **0** | 网关目录逐字节未动、7 个依赖与 cordis 块仍在、`--only-gateway --verify-only` 仍绿 |
+| R10 | **整份回滚不受影响** | 装两个后整份回滚 | **0** | `package.json` / `cordis.patch.yml` 与备份**逐字节一致**，两个插件目录都撤 |
+| R11 | **参数互斥** | 同时给 `--only-gateway --only-dsbot` | **4** | 参数非法 |
+| R12 | **用户自己的配置块** | profile 里已有手写的 `- id: mobile-gateway` 块（没有 dsh-suite 注释），再只撤网关 | **0** | 该块**逐字节保留**——收窄后只认安装写的注释行，误删就红 |
+| R13 | **重装后再单撤** | 连续装两次，再 `--only-gateway` | **0** | 上一轮我们追加的块也必须撤掉，不留指向空目录的配置 |
 
 安装脚本 `install.sh` / `install.ps1` 的退出码约定（两者一致）：
 
@@ -34,19 +43,46 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 
 ## 实测记录
 
-### 2026-10-24 · macOS · `bash scripts/selftest.sh`
+### 2026-10-25 · macOS · `bash scripts/selftest.sh`（单插件回滚落地后）
 
 ```
-== 反向测试（每条都应"红"）==
-== 1/5 预检 ==
+== 反向测试（每条都应“红”）==
   ✓ R1 装错目录（DSH_HOME 不存在）        退出码 1（符合预期）
   ✓ R2 仓库不完整（缺插件产物）            退出码 1（符合预期）
   ✓ R3 半装（删掉关键文件）                退出码 3（符合预期）
   ✓ R4 哈希不符（改一个字节）              退出码 3（符合预期）
   ✓ R5 无备份回滚（应拒绝）                退出码 4（符合预期）
 
-== 结果：通过 5 条，失败 0 条 ==
+== 单插件粒度回滚 ==
+  ✓ R6 无备份单插件回滚（应拒绝）          退出码 4（符合预期）
+  ✓ R11 -Only 互斥（应拒绝）               退出码 4（符合预期）
+  ✓ R7 只撤网关（应成功）                  退出码 0（符合预期）
+  ✓ R7 网关目录已撤 / 运行依赖已撤 / ds-bot 目录仍在且逐字节未动
+  ✓ R7 package.json 已撤销网关登记、保留 ds-bot 登记；cordis 块已撤
+  ✓ R7 只撤网关后 ds-bot 校验仍绿          退出码 0（符合预期）
+  ✓ R8 重复执行退出码 0、打印“已处于回滚状态”、ds-bot 没被误删、校验仍绿
+  ✓ R9 只撤 ds-bot（应成功）               退出码 0（符合预期）
+  ✓ R9 网关目录逐字节未动、7 个依赖仍在、cordis 块未被动
+  ✓ R9 只撤 ds-bot 后网关校验仍绿          退出码 0（符合预期）
+  ✓ R10 整份回滚（应成功）                 退出码 0（符合预期）
+  ✓ R10 package.json / cordis == 备份      逐字节一致
+  ✓ R12 用户自己的配置块逐字节保留         逐字节一致
+  ✓ R13 重装后只撤网关：追加的块与注释行都已撤
+
+== 结果：通过 42 条，失败 0 条 ==
+（退出码 0）
 ```
+
+### 同日 · 闸门自身的反向验证（在 `rollback.sh` 上植入缺陷，跑 selftest）
+
+| 变异 | 植入方式 | 结果 |
+|---|---|---|
+| A 无备份守卫失效 | `die 4`（无备份）改成 `die 3` | selftest exit 1：R5、R6 期望 4 实际 3 |
+| B 单撤网关时连 ds-bot 一起删 | 去掉 `WANT_DSBOT` 条件，直接 `remove_plugin_dir ds-bot` | selftest exit 1：R7 ds-bot 目录不见了 / 校验退出 3，R8 也没有 ds-bot |
+| C 整份回滚不还原 package.json | 注释掉 `cp -p "$BACKUP/package.json" …` | selftest exit 1：R10 package.json 与备份内容不同 |
+| D 收窄失效（旧版过宽的块识别） | 守卫改成 `grep -qE mobile-gateway`，且 `- id: mobile-gateway` 也当块首 | selftest exit 1：R12 用户配置块被误删（逐字节不一致、文本找不到） |
+
+每条变异只红对应用例；还原后 selftest 复跑 42/0、exit 0。
 
 ### 同日 · 正向路径（假 profile 沙箱，不碰真实环境）
 
@@ -57,18 +93,25 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | 重复 `--only-gateway`（幂等） | 退出 0；可重复执行、每次各自留备份 |
 | `rollback.sh --list` | 退出 0；按新→旧列出备份 |
 | `rollback.sh --backup <最早备份>` | 退出 0；移除两个插件 + 7 个补装依赖，还原 package.json / cordis.patch.yml |
+| `rollback.sh --only-gateway` | 退出 0；只撤网关与其登记/依赖/cordis 块，ds-bot 一个字节不变；重复执行仍退出 0 |
+| `rollback.sh --only-dsbot` | 退出 0；只撤 ds-bot 与其登记，网关与依赖不动 |
+| `rollback.sh --help` | 退出 0；列出 `--only-gateway` / `--only-dsbot` / `--backup` / `--list` / `--profile` / `--dsh-home` |
 
 ## Windows（`install.ps1` / `rollback.ps1`）的覆盖范围
 
 **当前没有 Windows 反向测试**（维护机是 macOS，无 PowerShell 运行时）。现有的保障是：
 
 - **静态检查**：`install.ps1` / `rollback.ps1` 的括号/引号/块注释/here-string 全部配平
-  （脚本：`scripts/selftest.sh` 之外另有一次性 lint，可复跑的思路见下）
+  （2026-10-25 对重写后的 `rollback.ps1` 复跑：`() {} []` 全配平、字符串与块注释都闭合，exit 0）
 - **参数与分支审阅**：`param(...)` 块、`Die <码> "..."` 的退出码分支与上表一致
   （`1` 预检、`2` 复制、`3` 校验、`4` 参数/环境）
+- **单插件回滚的 PowerShell 实现**与 `rollback.sh` 同规则：只认安装写的 `# dsh-suite:` 注释行、
+  `state.txt` 只读、幂等、依赖只随网关撤。**但本轮没有 Windows 实机验证**，上表的 R6–R13 只算
+  "静态通过"，不计入实测。
 
-**待补**：在 Windows 上跑一遍等价的反向场景（装错目录 / 仓库不完整 / 半装 / 哈希不符 / 无备份回滚），
-把实测退出码补进本文。**在那之前，Windows 路径的结论只能是"静态通过"，不是"实测通过"。**
+**待补**：在 Windows 上跑一遍等价的反向场景（装错目录 / 仓库不完整 / 半装 / 哈希不符 / 无备份回滚 /
+只撤网关后 ds-bot 校验仍绿 / 幂等重跑 / 用户自己的配置块不被误删），把实测退出码补进本文。
+**在那之前，Windows 路径的结论只能是"静态通过"，不是"实测通过"。**
 
 ## 维护规则
 

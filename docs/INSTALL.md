@@ -85,6 +85,7 @@ git clone https://github.com/YDGG123/dsh-suite.git
 
 > 脚本会**先备份再安装**，备份路径会打印在输出里，**记下来**（回滚要用）。
 > 只装一个用 `-OnlyGateway` / `-OnlyDsBot`；不写参数 = 两个都装。
+> 想先干跑不落盘：加 `-DryRun`（macOS `--dry-run`）；只想校验已装结果：`-VerifyOnly`（macOS `--verify-only`）。
 
 ### 2.1 基础组合：装移动网关
 
@@ -263,14 +264,17 @@ Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
 3. 重启 DeepSeek Harness
 4. 有新 IPA 时按第 3 步重装覆盖（**配对信息保留**）
 
-### 回滚（按插件粒度）
+### 回滚（整份 profile 快照恢复）
 
 | 目的 | Windows | macOS |
 |---|---|---|
-| 回滚全部 | `.\scripts\rollback.ps1` | `bash scripts/rollback.sh` |
-| 只回滚网关 | `.\scripts\rollback.ps1 -OnlyGateway` | `bash scripts/rollback.sh --only-gateway` |
-| 只回滚 ds-bot | `.\scripts\rollback.ps1 -OnlyDsBot` | `bash scripts/rollback.sh --only-dsbot` |
+| 回滚到最近一次备份 | `.\scripts\rollback.ps1` | `bash scripts/rollback.sh` |
+| 列出可用备份 | `.\scripts\rollback.ps1 -List` | `bash scripts/rollback.sh --list` |
+| 回滚到指定备份 | `.\scripts\rollback.ps1 -Backup <目录>` | `bash scripts/rollback.sh --backup <目录>` |
 
+- 回滚是**整份快照恢复**：安装脚本每次安装前都会备份一次，回滚会把那次安装新增的插件目录
+  与补装的运行依赖一起移除，并还原 `package.json` / `cordis.patch.yml`
+- 想"只回滚其中一个插件"：分两次安装（每次只装一个，各自留下备份），再回滚到目标插件安装前的那份备份
 - 回滚从**安装时自动做的备份**恢复（备份路径在安装输出里打印过）
 - **回滚 ds-bot 后**：手机仍能聊天，团队页回到降级名册、群里不弹卡 → 预期表现，不是故障
 - **回滚网关后**：手机连不上，重新配对即可

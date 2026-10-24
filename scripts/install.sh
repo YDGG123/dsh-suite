@@ -117,6 +117,8 @@ elif [ "$VERIFY_ONLY" -eq 0 ]; then
     done
   } > "$BACKUP_DIR/state.txt"
   ok "备份完成：$BACKUP_DIR（回滚用 scripts/rollback.sh）"
+  # 机器可读锚点：AI/文档按这一行取备份路径（别依赖中文措辞）
+  say "backup: $BACKUP_DIR"
 fi
 
 # ---------- 3. 安装 ----------
@@ -254,7 +256,7 @@ for (const [k, v] of Object.entries(m.dshPluginMobileGateway || {})) console.log
   for dep in "${GATEWAY_DEPS[@]}"; do
     [ -f "$MODULES/$dep/package.json" ] || fail "网关运行依赖缺失：$dep"
   done
-  [ "$verify_fail" -eq 0 ] && ok "网关：文件齐全、哈希与仓库一致、运行依赖在位"
+  if [ "$verify_fail" -eq 0 ]; then ok "网关：文件齐全、哈希与仓库一致、运行依赖在位"; else printf 'CHECK gateway: FAIL\n'; fi
 fi
 
 if [ "$WANT_DSBOT" -eq 1 ]; then
@@ -276,7 +278,7 @@ const m = require(process.argv[1]);
 for (const [k, v] of Object.entries(m.dsBot || {})) console.log(k + "\t" + v);
 ' "$REPO_ROOT/plugins/manifest.json")
   fi
-  [ "$verify_fail" -eq 0 ] && ok "ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards"
+  if [ "$verify_fail" -eq 0 ]; then ok "ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards"; else printf 'CHECK dsbot: FAIL\n'; fi
 fi
 
 if [ -f "$PROFILE_DIR/cordis.patch.yml" ] && [ "$WANT_GATEWAY" -eq 1 ]; then
@@ -291,7 +293,13 @@ if [ "$have_json_editor" -eq 1 ] && [ "$VERIFY_ONLY" -eq 0 ] && [ "$DRY_RUN" -eq
   done
 fi
 
-[ "$verify_fail" -eq 0 ] || die 3 "校验未通过（看上面 ✗ 的项）。可用 scripts/rollback.sh 还原"
+if [ "$verify_fail" -ne 0 ]; then
+  printf 'RESULT: FAIL\n'
+  die 3 "校验未通过（看上面 ✗ 的项）。可用 scripts/rollback.sh 还原"
+fi
+[ "$WANT_GATEWAY" -eq 1 ] && printf 'CHECK gateway: PASS\n'
+[ "$WANT_DSBOT" -eq 1 ] && printf 'CHECK dsbot: PASS\n'
+printf 'RESULT: PASS\n'
 
 # ---------- 5. 完成 ----------
 say

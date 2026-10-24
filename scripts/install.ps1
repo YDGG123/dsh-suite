@@ -130,6 +130,7 @@ if ($DryRun) {
     }
     Write-TextNoBom (& $Join $BackupDir 'state.txt') (($state -join "`n") + "`n")
     Ok "备份完成：$BackupDir（回滚用 scripts\rollback.ps1）"
+  Say "backup: $BackupDir"
 }
 
 # ---------- 3. 安装 ----------

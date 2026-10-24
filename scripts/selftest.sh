@@ -15,13 +15,13 @@
 #   R11 -OnlyGateway 与 -OnlyDsBot 同时给             → 参数非法，退出码 4
 #   R12 用户自己的 - id: mobile-gateway 块             → 必须原样保留（误删就红）
 #   R12b 用户块紧跟安装块之后                          → 只撤我们那块，用户块必须留下
+#   R13 装两次再只撤网关                              → 上一轮追加的块要撤；目录按 had 保留
 #   R14 安装前已有 ds-bot 目录（had:）                 → 只撤登记、目录保留（删了就红）
 #   R15 整份回滚遇 had:                               → 目录保留；new: 的插件仍撤掉
 #   R16 文档与 IPA/清单一致                            → 一致通过；改坏一个 sha 必须红
 #   R17 漏传 --ipa                                     → 参数非法，退出码 2（不许静默沿用旧 sha）
 #   R18 相对路径 --gateway                             → 按调用者 cwd 解析并成功同步
 #   R19 换新 IPA 后自动改写文档                        → 8 处更新、旧值 0 命中、自检通过
-#   R13 装两次再只撤网关                              → 上一轮追加的块要撤；目录按 had 保留
 #
 # 用法：bash scripts/selftest.sh
 set -uo pipefail
@@ -269,6 +269,27 @@ assert_no_text "R19 旧名 0 命中" "$FAKE19/README.md" "DshMobile-iOS16-v1.7.8
 assert_no_text "R19 旧 sha 0 命中" "$FAKE19/docs/INSTALL.md" "5f8ae6a7e46dc0020eb00baca635ee42428897ac828e55a994095535124dd39f"
 expect_code "R19 改完后文档自检通过" 0 bash "$FAKE19/scripts/sync-from-dev.sh" --check-docs
 
+# R20b：--no-ipa 之后 manifest.ipa 是 null，文档仍描述 app 里的旧包。下一轮带新 IPA 时，
+#       旧名/旧 sha/旧大小必须从 app 里那个旧包推出来，文档照样改对（否则会留着旧信息）。
+#       独立目录（repo20b）：与上一段共用会把 app/ 拷成双包，撞“只能一个 IPA”的保护。
+FAKE20B="$SANDBOX/repo20b"
+fake_repo "$FAKE20B"
+expect_code "R20 --no-ipa 同步（应成功）" 0 bash "$FAKE20B/scripts/sync-from-dev.sh" --gateway "$SANDBOX/gwsrc" --no-ipa
+assert_text "R20 manifest.ipa 已置 null" "$FAKE20B/plugins/manifest.json" '"ipa": null'
+NEWIPA20="$SANDBOX/DshMobile-iOS16-20261025-888888.ipa"
+head -c 5000 /dev/urandom > "$NEWIPA20"
+expect_code "R20 随后换新 IPA（应成功）" 0 bash "$FAKE20B/scripts/sync-from-dev.sh" --gateway "$SANDBOX/gwsrc" --ipa "$NEWIPA20"
+assert_text    "R20 README 用了新名" "$FAKE20B/README.md" "$(basename "$NEWIPA20")"
+assert_no_text "R20 旧名 0 命中" "$FAKE20B/README.md" "DshMobile-iOS16-v1.7.8-29.unsigned.ipa"
+expect_code "R20 改完后文档自检通过" 0 bash "$FAKE20B/scripts/sync-from-dev.sh" --check-docs
+
+# R21：INSTALL §2.4 的四个机器可读锚点必须存在，且脚本真的会打印（文档不说假话）。
+for anchor in 'backup: ' 'CHECK gateway: PASS' 'CHECK dsbot: PASS' 'RESULT: PASS'; do
+  assert_text "R21 文档含锚点 [$anchor]" "$REPO_ROOT/docs/INSTALL.md" "$anchor"
+done
+assert_text "R21 install.sh 打印 backup 锚点" "$REPO_ROOT/scripts/install.sh" 'say "backup: '
+assert_text "R21 install.ps1 打印 RESULT 锚点" "$REPO_ROOT/scripts/install.ps1" "'RESULT: PASS'"
+
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"
 [ "$failn" -eq 0 ] || exit 1
-printf '（说明：R1–R6、R11 必须“红”，R7–R19 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'
+printf '（说明：R1–R6、R11 必须“红”，R7–R21 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'

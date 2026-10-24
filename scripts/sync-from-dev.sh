@@ -144,7 +144,16 @@ try {
 } catch {
   ipa = null;
 }
+// manifest 没声明 IPA（上一次 --no-ipa）时，文档里描述的仍是 app/ 里那个旧包：
+// 从文件本身推出旧名/旧 sha/旧大小，下一次换包才改得动文档。
 let size = null;
+let files = [];
+try { files = fs.readdirSync('app').filter(n => n.endsWith('.ipa')); } catch { files = []; }
+if (!ipa && files.length === 1) {
+  const file = 'app/' + files[0];
+  const crypto = require('crypto');
+  ipa = { name: files[0], sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
+}
 if (ipa && ipa.name && fs.existsSync('app/' + ipa.name)) size = fs.statSync('app/' + ipa.name).size;
 console.log(JSON.stringify({ name: ipa ? ipa.name : null, sha256: ipa ? ipa.sha256 : null, size }));
 JS
@@ -196,7 +205,8 @@ if [ -n "$GATEWAY_SRC" ]; then copy_plugin "dsh-plugin-mobile-gateway" "$GATEWAY
 if [ -n "$DSBOT_SRC" ]; then copy_plugin "ds-bot" "$DSBOT_SRC" "$DSBOT_WHITELIST"; fi
 
 if [ "$NO_IPA" -eq 1 ]; then
-  say "→ 本次不发 IPA（--no-ipa）：manifest.ipa 置为 null，文档不动"
+  say "  ⚠ 本次不发 IPA（--no-ipa）：manifest.ipa 置为 null。"
+  say "    README/INSTALL 仍描述 app/ 里的旧包；下次带 --ipa 同步会自动改写它们。"
 elif [ -n "$IPA_SRC" ]; then
   sync_ipa "$IPA_SRC"
 fi

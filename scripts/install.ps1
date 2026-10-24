@@ -284,7 +284,7 @@ if ($WantGateway) {
     foreach ($dep in $GatewayDeps) {
         if (-not (Test-Path -LiteralPath (& $Join (& $Join $Modules $dep) 'package.json'))) { Fail "网关运行依赖缺失：$dep" }
     }
-    if (-not $VerifyFail) { Ok '网关：文件齐全、哈希与仓库一致、运行依赖在位' }
+    if (-not $VerifyFail) { Ok '网关：文件齐全、哈希与仓库一致、运行依赖在位' } else { Say 'CHECK gateway: FAIL' }
 }
 
 if ($WantDsBot) {
@@ -306,7 +306,7 @@ if ($WantDsBot) {
             Check-Hash (& $Join $D $prop.Name) $prop.Value "ds-bot $($prop.Name)"
         }
     }
-    if (-not $VerifyFail) { Ok 'ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards' }
+    if (-not $VerifyFail) { Ok 'ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards' } else { Say 'CHECK dsbot: FAIL' }
 }
 
 $cordisFile = & $Join $ProfileDir 'cordis.patch.yml'
@@ -321,7 +321,13 @@ if (-not $VerifyOnly) {
     if ($WantDsBot -and ($pkgText -notmatch [regex]::Escape('"' + $DsBotName + '"'))) { Fail "package.json 里没有登记 $DsBotName" }
 }
 
-if ($VerifyFail) { Die 3 '校验未通过（看上面 X 的项）。可用 scripts/rollback.ps1 还原' }
+if ($VerifyFail) {
+    Say 'RESULT: FAIL'
+    Die 3 '校验未通过（看上面 X 的项）。可用 scripts/rollback.ps1 还原'
+}
+if ($WantGateway) { Say 'CHECK gateway: PASS' }
+if ($WantDsBot) { Say 'CHECK dsbot: PASS' }
+Say 'RESULT: PASS'
 
 # ---------- 5. 完成 ----------
 Say ''

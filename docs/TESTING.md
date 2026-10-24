@@ -11,7 +11,7 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 
 - 退出码：`0` = 所有反向场景都按预期表现（**这是通过**）；非 0 = 有场景没红、红了但码不对，或结构断言（文件/字节/文本）不符。
 - 脚本会在 `mktemp -d` 的临时目录里造一个假 profile，跑完自动清理，**不影响真实 DSH 数据**。
-- R16–R19 跑在临时仓库副本里（脚本/文档/manifest/app 各拷一份），**不改本仓库的任何文件**。
+- R16–R20 跑在临时仓库副本里（脚本/文档/manifest/app 各拷一份，每段独立目录），**不改本仓库的任何文件**；R21 是对本仓库文档的只读检查。
 - R1–R6、R11 是"必须红"的场景；R7–R15（含 R12b）是"正确实现下应当绿、写错就会红"的闸门（撤错插件、删多、误删用户配置、丢 had 目录、非幂等都会让它们变红）。
 
 ## 反向场景与期望退出码
@@ -38,6 +38,8 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | R17 | **漏传 --ipa** | `sync-from-dev.sh --dsbot <目录>`（不给 `--ipa`、不给 `--no-ipa`） | **2** | 参数非法：不许静默沿用旧 sha256 |
 | R18 | **相对路径锚点** | 从别的 cwd 用相对路径 `--gateway gwsrc --no-ipa` | **0** | 按调用者 cwd 解析并成功同步；源目录里的 `dev/`、`test/` 不进发布树 |
 | R19 | **换包后文档自动改写** | 临时副本上用一个新 IPA 同步 | **0** | README/INSTALL 的 8 处自动更新、旧名/旧 sha 0 命中、随后 `--check-docs` 通过 |
+| R20 | **先 --no-ipa 再换包** | 独立副本先 `--no-ipa`（manifest.ipa=null），再带新 IPA 同步 | **0** | 旧名/旧 sha/旧大小从 `app/` 里那个包推出，文档照样改对（manifest 不记得也要能改） |
+| R21 | **输出锚点文档** | 只读检查 INSTALL §2.4 与两个 install 脚本 | **0** | `backup:`、`CHECK gateway`、`CHECK dsbot`、`RESULT` 四个锚点文档里必须有，且脚本真的打印它们 |
 
 安装脚本 `install.sh` / `install.ps1` 的退出码约定（两者一致）：
 
@@ -82,8 +84,10 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
   ✓ R16 文档与包一致：一份一致 → 0；改坏 README 的 sha → 1
   ✓ R17 漏传 --ipa → 2；R18 相对路径从别的 cwd 同步成功，源里的 dev/、test/ 未进树
   ✓ R19 换新 IPA：README/INSTALL 8 处自动改写、旧名与旧 sha 0 命中、随后自检通过
+  ✓ R20 先 --no-ipa 再换包：manifest.ipa=null 也能把文档改对（旧值从 app 推出）
+  ✓ R21 四个输出锚点在 INSTALL 与两个 install 脚本里都存在
 
-== 结果：通过 70 条，失败 0 条 ==
+== 结果：通过 82 条，失败 0 条 ==
 （退出码 0）
 ```
 
@@ -109,6 +113,7 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | I 相对路径不再按调用者 cwd 归一 | `abs_path` 直接返回原串 | selftest exit 1：R18 同步失败（找不到源目录） |
 | J 文档不改写 | manifest 重建后把待改写文件列表置空 | selftest exit 1：R19 新名没出现、旧名/旧 sha 仍在（5 条红） |
 | K sanitize 白名单放宽 | 网关白名单改成 `^(.*)` | selftest exit 1：脚本自带 junk 闸门拒绝（`sanitize 漏了 …/dev`），R18/R19 连带红 |
+| L 不推导旧 IPA | 删掉“manifest.ipa 为空时从 app 的包推旧名/旧 sha”的那段 | selftest exit 1：R20 换包失败、文档留着旧名（4 条红） |
 
 另有两条一次性实测（不进 selftest，避免依赖权限位）：把源文件设为 `chmod 000` 制造复制失败 → 退出 1 且旧发布树哈希不变；
 源目录不存在 → 退出 1。

@@ -154,11 +154,14 @@ Windows 取退出码：`echo $LASTEXITCODE`；macOS：`echo $?`。
   ✓ DSH 数据目录：<你的 .dsh 路径>
   ✓ 目标 profile：desktop（<…>/profiles/desktop）
 == 2/5 备份 ==
-  （打印备份目录：…/profiles/<profile>/backups/dsh-suite-<YYYYMMDD-HHMMSS>）← 记下它，回滚要用
+  backup: <…>/profiles/<profile>/backups/dsh-suite-<YYYYMMDD-HHMMSS>   ← 记下这一行，回滚要用
 == 3/5 安装插件 ==
 == 4/5 校验 ==
   ✓ 网关：文件齐全、哈希与仓库一致、运行依赖在位
   ✓ ds-bot：文件齐全、哈希与仓库一致、含 dsBotCards
+CHECK gateway: PASS
+CHECK dsbot: PASS
+RESULT: PASS
 == 5/5 完成 ==
   已安装：移动网关 ds-bot
   下一步：
@@ -167,7 +170,14 @@ Windows 取退出码：`echo $LASTEXITCODE`；macOS：`echo $?`。
     3) 设置 → 移动网关：按 docs/INSTALL.md 第 4 步生成配对码，手机扫码
 ```
 
-> 只装了网关（`-OnlyGateway`）时，`4/5 校验` 里**只有网关那一行**，`已安装：` 里也只有「移动网关」——**这是正常的**，不是漏装。
+> 只装了网关（`-OnlyGateway`）时，`4/5 校验` 里**只有网关那一行**，`CHECK` 也只有 `CHECK gateway: PASS`，
+> `已安装：` 里只有「移动网关」——**这是正常的**，不是漏装。
+>
+> **四个机器可读锚点**（脚本/文档/AI 都以它们为准，不靠中文描述猜）：`backup: <备份目录>`、
+> `CHECK gateway: PASS|FAIL`、`CHECK dsbot: PASS|FAIL`、`RESULT: PASS|FAIL`。校验失败时先打
+> `CHECK <插件>: FAIL`（哪个插件红）再打 `RESULT: FAIL` 并退出码 3。
+>
+> **回滚用的备份路径直接取 `backup:` 那一行**，不要从“== 2/5 备份 ==”旁边的中文描述里手抄。
 
 **一条命令自证"到底装好了没有"**（我实测：退出码 0 + 两行 `✓`）：
 
@@ -342,7 +352,7 @@ Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
     回滚**保留当前目录**（不删除），只把 `package.json` 的登记还原成安装前的值；网关升级还会保留它原有的
     `cordis` 配置块与已补装的运行依赖。输出会明确提示"保留当前目录，如需旧版请自备恢复"，
     不会让用户"新版本和旧版本都没有"。整份回滚与单插件回滚同口径
-- 回滚从**安装时自动做的备份**恢复（备份路径在安装输出里打印过）
+- 回滚从**安装时自动做的备份**恢复：备份路径取安装输出里的 `backup: <目录>` 那一行（机器可读锚点）
 - **只撤 ds-bot 后**：手机仍能聊天，团队页回到降级名册、群里不弹卡 → 预期表现，不是故障
 - **只撤网关后**：手机连不上，重新配对或重装网关即可；桌面 Bot 团队不受影响
 

@@ -1,0 +1,50 @@
+{
+  "name": "dsh-plugin-mobile-gateway",
+  "version": "0.10.4",
+  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、插件管理、官方语音输入、文件卡片与安全文件预览、局域网及 Cloudflare Tunnel，以及自适应深浅色控制面板。0.10.4 精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。",
+  "main": "lib/index.mjs",
+  "files": [
+    "bin",
+    "helper",
+    "lib",
+    "docs",
+    "cordis.patch.yml",
+    "PROTOCOL.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway.git"
+  },
+  "homepage": "https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/issues"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "ws": "^8.18.0",
+    "qrcode": "^1.5.4"
+  },
+  "bin": "bin/setup-ip.mjs",
+  "scripts": {
+    "test": "export DSH_MOBILE_GATEWAY_LOG=${DSH_MOBILE_GATEWAY_LOG:-/tmp/mobile-gateway-test.log} && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/pair-payload.test.mjs && node --test test/panel-script.test.mjs && node --test test/pair-frame-order.test.mjs && node --test test/extra-routes.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && node --test test/mobile-v1-projection.test.mjs && node --test test/mobile-v1-public-url.test.mjs && node --test test/mobile-v1-sessions.test.mjs && node --test test/mobile-v1-server.test.mjs && node --test test/mobile-v1-admin.test.mjs && node --test test/mobile-v1-host-service.test.mjs && node --test test/mobile-v1-wiring.test.mjs && node --test test/mobile-v1-team-feed.test.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "license": "MIT"
+}

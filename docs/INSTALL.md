@@ -72,7 +72,6 @@ git clone https://github.com/YDGG123/dsh-suite.git
 
 - **预期**：`16.x`，且手机上能打开 **TrollStore**（巨魔）
 - **失败**：没有巨魔 → 走 [3.5 备选：无巨魔时自签安装](#35-备选无巨魔时自签安装sideloadly)
-  - **想装巨魔**：TrollStore 只支持特定 iOS 版本区间，安装方法见其官方文档 https://github.com/opa334dev/TrollStore （支持范围与安装方式以该页为准；装巨魔本身超出本指南范围）
 
 ### 1.4 手机与电脑在同一 Wi-Fi
 

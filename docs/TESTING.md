@@ -11,7 +11,7 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 
 - 退出码：`0` = 所有反向场景都按预期表现（**这是通过**）；非 0 = 有场景没红、红了但码不对，或结构断言（文件/字节/文本）不符。
 - 脚本会在 `mktemp -d` 的临时目录里造一个假 profile，跑完自动清理，**不影响真实 DSH 数据**。
-- R1–R6、R11 是"必须红"的场景；R7–R13 是"正确实现下应当绿、写错就会红"的闸门（撤错插件、删多、误删用户配置、非幂等都会让它们变红）。
+- R1–R6、R11 是"必须红"的场景；R7–R15（含 R12b）是"正确实现下应当绿、写错就会红"的闸门（撤错插件、删多、误删用户配置、丢 had 目录、非幂等都会让它们变红）。
 
 ## 反向场景与期望退出码
 
@@ -29,7 +29,10 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | R10 | **整份回滚不受影响** | 装两个后整份回滚 | **0** | `package.json` / `cordis.patch.yml` 与备份**逐字节一致**，两个插件目录都撤 |
 | R11 | **参数互斥** | 同时给 `--only-gateway --only-dsbot` | **4** | 参数非法 |
 | R12 | **用户自己的配置块** | profile 里已有手写的 `- id: mobile-gateway` 块（没有 dsh-suite 注释），再只撤网关 | **0** | 该块**逐字节保留**——收窄后只认安装写的注释行，误删就红 |
-| R13 | **重装后再单撤** | 连续装两次，再 `--only-gateway` | **0** | 上一轮我们追加的块也必须撤掉，不留指向空目录的配置 |
+| R13 | **重装后再单撤（升级）** | 连续装两次，再 `--only-gateway` | **0** | 第二次安装属 `had:`：目录、运行依赖、原有的配置块都保留，只还原登记——回到"第二次安装前" |
+| R12b | **用户块紧跟安装块** | 安装块之后**直接**追加一个用户自己的 `- id: mobile-gateway` 块，再 `--only-gateway` | **0** | 跳过区间只认我们块首的那一个 `- id:`；用户块必须留下（吞掉就红） |
+| R14 | **had: 目录保留** | 安装前就存在 `node_modules/ds-bot`（登记 `0.2.0`），再 `--only-dsbot` | **0** | 备份没有旧版本：**保留当前目录**，登记还原成安装前的 `0.2.0`，并明确提示 |
+| R15 | **整份回滚同样保留 had** | 安装前就存在网关目录，再整份回滚 | **0** | had 的目录保留；`new:` 的另一个插件仍撤掉 |
 
 安装脚本 `install.sh` / `install.ps1` 的退出码约定（两者一致）：
 
@@ -67,9 +70,12 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
   ✓ R10 整份回滚（应成功）                 退出码 0（符合预期）
   ✓ R10 package.json / cordis == 备份      逐字节一致
   ✓ R12 用户自己的配置块逐字节保留         逐字节一致
-  ✓ R13 重装后只撤网关：追加的块与注释行都已撤
+  ✓ R13 装两次后只撤网关：升级场景，目录/依赖/原有配置块都保留，只还原登记
+  ✓ R12b 用户块紧跟安装块：只撤我们那块，用户块仍在、只剩 1 块
+  ✓ R14 had 场景：目录保留、提示明确、登记还原为 0.2.0
+  ✓ R15 整份回滚：had 目录保留、new 插件仍撤
 
-== 结果：通过 42 条，失败 0 条 ==
+== 结果：通过 56 条，失败 0 条 ==
 （退出码 0）
 ```
 
@@ -81,8 +87,10 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 | B 单撤网关时连 ds-bot 一起删 | 去掉 `WANT_DSBOT` 条件，直接 `remove_plugin_dir ds-bot` | selftest exit 1：R7 ds-bot 目录不见了 / 校验退出 3，R8 也没有 ds-bot |
 | C 整份回滚不还原 package.json | 注释掉 `cp -p "$BACKUP/package.json" …` | selftest exit 1：R10 package.json 与备份内容不同 |
 | D 收窄失效（旧版过宽的块识别） | 守卫改成 `grep -qE mobile-gateway`，且 `- id: mobile-gateway` 也当块首 | selftest exit 1：R12 用户配置块被误删（逐字节不一致、文本找不到） |
+| E 跳过区间不区分第几个 `- id:` | 去掉 `seenid` 守卫，恢复成“见到 `- id: mobile-gateway` 就继续跳过” | selftest exit 1：R12b 用户块被吞（块数量 0） |
+| F had: 保留目录失效 | 删掉 `remove_plugin_dir` 里 `had → 保留并 return` 的早退 | selftest exit 1：R13/R14 的 had 目录不见了（期望仍在），共 4 条红 |
 
-每条变异只红对应用例；还原后 selftest 复跑 42/0、exit 0。
+每条变异只红对应用例；还原后 selftest 复跑 56/0、exit 0。
 
 ### 同日 · 正向路径（假 profile 沙箱，不碰真实环境）
 
@@ -106,7 +114,7 @@ bash scripts/selftest.sh          # macOS / Linux（会自建临时 HOME 沙箱�
 - **参数与分支审阅**：`param(...)` 块、`Die <码> "..."` 的退出码分支与上表一致
   （`1` 预检、`2` 复制、`3` 校验、`4` 参数/环境）
 - **单插件回滚的 PowerShell 实现**与 `rollback.sh` 同规则：只认安装写的 `# dsh-suite:` 注释行、
-  `state.txt` 只读、幂等、依赖只随网关撤。**但本轮没有 Windows 实机验证**，上表的 R6–R13 只算
+  `state.txt` 只读、幂等、依赖只随网关撤。**但本轮没有 Windows 实机验证**，上表的 R6–R15（含 R12b）只算
   "静态通过"，不计入实测。
 
 **待补**：在 Windows 上跑一遍等价的反向场景（装错目录 / 仓库不完整 / 半装 / 哈希不符 / 无备份回滚 /

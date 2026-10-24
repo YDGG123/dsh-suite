@@ -14,7 +14,10 @@
 #   R10 整份回滚不受影响                              → package.json / cordis 与备份逐字节一致
 #   R11 -OnlyGateway 与 -OnlyDsBot 同时给             → 参数非法，退出码 4
 #   R12 用户自己的 - id: mobile-gateway 块             → 必须原样保留（误删就红）
-#   R13 装两次再只撤网关                              → 上一轮我们追加的块也要撤掉
+#   R12b 用户块紧跟安装块之后                          → 只撤我们那块，用户块必须留下
+#   R14 安装前已有 ds-bot 目录（had:）                 → 只撤登记、目录保留（删了就红）
+#   R15 整份回滚遇 had:                               → 目录保留；new: 的插件仍撤掉
+#   R13 装两次再只撤网关                              → 上一轮追加的块要撤；目录按 had 保留
 #
 # 用法：bash scripts/selftest.sh
 set -uo pipefail
@@ -165,10 +168,56 @@ P13="$HOME13/.dsh/profiles/desktop"
 env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 expect_code "R13 重装后只撤网关（应成功）" 0 env DSH_HOME="$HOME13/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
-assert_no_text "R13 本安装追加的块已撤" "$P13/cordis.patch.yml" "- id: mobile-gateway"
-assert_no_text "R13 注释行也已撤" "$P13/cordis.patch.yml" "# dsh-suite: 手机连接需要开启"
-assert_absent "R13 网关目录已撤" "$P13/node_modules/dsh-plugin-mobile-gateway"
+# 第二次安装时网关已在（state 记 had:）：保留目录、依赖与它原有的配置块，
+# 这才是“第二次安装之前”的样子（上一轮的安装结果）。
+assert_present "R13 网关目录按 had 保留" "$P13/node_modules/dsh-plugin-mobile-gateway"
+assert_present "R13 运行依赖也保留" "$P13/node_modules/ws"
+assert_text    "R13 安装前就有的配置块保留" "$P13/cordis.patch.yml" "# dsh-suite: 手机连接需要开启"
+assert_text    "R13 提示保留而非删除" "$SANDBOX/out.log" "保留当前目录"
+
+
+# R12b：用户自己的块**紧跟**在安装块之后 —— 只撤我们的块，用户块必须原样留下。
+#        （跳过区间若把第二个 "- id: mobile-gateway" 也当成自己的，这条会红。）
+HOME12B="$(new_home r12b)"
+P12B="$HOME12B/.dsh/profiles/desktop"
+env DSH_HOME="$HOME12B/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+cat >> "$P12B/cordis.patch.yml" <<'YML'
+- id: mobile-gateway
+  name: dsh-plugin-mobile-gateway
+  config:
+    gatewayEnabled: true
+    lanPort: 3999
+YML
+expect_code "R12b 只撤网关（用户块紧随其后）" 0 env DSH_HOME="$HOME12B/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-gateway
+assert_no_text "R12b 安装块注释已撤" "$P12B/cordis.patch.yml" "# dsh-suite: 手机连接需要开启"
+assert_text   "R12b 用户块仍在" "$P12B/cordis.patch.yml" "lanPort: 3999"
+assert_same   "R12b 只剩用户那一块" "1" "$(grep -c '^- id: mobile-gateway$' "$P12B/cordis.patch.yml")"
+assert_absent "R12b 网关目录已撤" "$P12B/node_modules/dsh-plugin-mobile-gateway"
+
+# R14：安装前就有 ds-bot 目录（state 记 had:）→ 回滚只撤登记、**保留目录**。
+#        （旧行为会删掉它，让用户"新版本和旧版本都没有"，这条锁死新口径。）
+HOME14="$(new_home r14)"
+P14="$HOME14/.dsh/profiles/desktop"
+mkdir -p "$P14/node_modules/ds-bot"
+printf 'old version marker\n' > "$P14/node_modules/ds-bot/OLD.txt"
+printf '{"name":"dsh-profile-desktop","dependencies":{"ds-bot":"0.2.0"}}\n' > "$P14/package.json"
+env DSH_HOME="$HOME14/.dsh" bash "$REPO_ROOT/scripts/install.sh" --only-dsbot >/dev/null 2>&1
+expect_code "R14 只撤 ds-bot（had 场景）" 0 env DSH_HOME="$HOME14/.dsh" bash "$REPO_ROOT/scripts/rollback.sh" --only-dsbot
+assert_present "R14 安装前就有的目录被保留" "$P14/node_modules/ds-bot"
+assert_text    "R14 明确提示保留当前目录" "$SANDBOX/out.log" "保留当前目录"
+assert_text    "R14 登记还原为安装前的值" "$P14/package.json" '"ds-bot": "0.2.0"'
+assert_no_text "R14 不再是本安装的 file: 登记" "$P14/package.json" '"ds-bot": "file:'
+
+# R15：整份回滚同样遵守 had: 保留目录（new: 的另一个插件仍撤掉）。
+HOME15="$(new_home r15)"
+P15="$HOME15/.dsh/profiles/desktop"
+mkdir -p "$P15/node_modules/dsh-plugin-mobile-gateway"
+printf 'old gateway\n' > "$P15/node_modules/dsh-plugin-mobile-gateway/OLD.txt"
+env DSH_HOME="$HOME15/.dsh" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+expect_code "R15 整份回滚（had 场景）" 0 env DSH_HOME="$HOME15/.dsh" bash "$REPO_ROOT/scripts/rollback.sh"
+assert_present "R15 安装前就有的网关目录被保留" "$P15/node_modules/dsh-plugin-mobile-gateway"
+assert_absent  "R15 ds-bot（new:）仍被撤掉" "$P15/node_modules/ds-bot"
 
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"
 [ "$failn" -eq 0 ] || exit 1
-printf '（说明：R1–R6、R11 必须“红”，R7–R13 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'
+printf '（说明：R1–R6、R11 必须“红”，R7–R15 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'

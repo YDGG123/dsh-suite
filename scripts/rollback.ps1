@@ -172,20 +172,20 @@ function Restore-Registration([string]$Name) {
 }
 
 function Test-GatewayBegin([string]$Line) { return $Line.StartsWith($GatewayBlockComment) }
-function Test-GatewayContinue([string]$Line) {
-    return $Line -match '^\s' -or $Line -eq '' -or $Line -match '^- id: mobile-gateway\s*$'
-}
-
-# 去掉安装脚本追加的那一块：从注释行起到块结束（缩进子行、空行、紧随的 - id 行）。
+# 去掉安装脚本追加的那一块：从注释行起，跳过空行、缩进子行，以及紧随其后的第一个
+# `- id: mobile-gateway`。再出现的 `- id:` 顶格行是用户自己的块，必须留下。
 function Remove-GatewayBlock([string]$Text) {
     $result = New-Object System.Collections.Generic.List[string]
     $skip = $false
+    $seenId = $false
     foreach ($line in ($Text -split "`r?`n")) {
         if ($skip) {
-            if (Test-GatewayContinue $line) { continue }
+            if ($line -eq '') { continue }
+            if ($line -match '^\s') { continue }
+            if (-not $seenId -and $line -match '^- id: mobile-gateway\s*$') { $seenId = $true; continue }
             $skip = $false
         }
-        if (Test-GatewayBegin $line) { $skip = $true; continue }
+        if (Test-GatewayBegin $line) { $skip = $true; $seenId = $false; continue }
         $result.Add($line)
     }
     while ($result.Count -gt 0 -and $result[$result.Count - 1].Trim() -eq '') { $result.RemoveAt($result.Count - 1) }
@@ -199,6 +199,12 @@ function Remove-Cordis {
     $current = [System.IO.File]::ReadAllText($ProfileCordis)
     if (-not $current.Contains($GatewayBlockComment)) {
         Say '  · cordis.patch.yml 里没有本安装追加的配置块（保留你的设置）'
+        return
+    }
+    # 升级场景：安装前这份备份里已经有我们追加的块，说明它本来就该在 → 保留。
+    if ((Test-Path -LiteralPath $backupCordis) -and
+        ([System.IO.File]::ReadAllText($backupCordis)).Contains($GatewayBlockComment)) {
+        Say '  · 安装前就有该配置块：保留（回到安装前的样子）'
         return
     }
     $clean = Remove-GatewayBlock $current
@@ -215,17 +221,21 @@ function Remove-Cordis {
     Ok 'cordis.patch.yml 已撤除本安装追加的移动网关配置块'
 }
 
+function Test-PluginHad([string]$Name) {
+    return (@(Get-Content -LiteralPath $stateFile -Encoding ASCII) -contains "had:$Name")
+}
+
 function Remove-PluginDir([string]$Name) {
-    $had = @(Get-Content -LiteralPath $stateFile -Encoding ASCII) -contains "had:$Name"
     $target = & $Join $Modules $Name
+    if (Test-PluginHad $Name) {
+        # 安装前就有这个目录：备份里没有旧版本可还原，删掉只会让用户两边都没有。
+        Warn "$Name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复"
+        return
+    }
     if (Test-Path -LiteralPath $target) {
         try { Remove-Item -LiteralPath $target -Recurse -Force }
         catch { Die 2 "删除插件目录失败：$target（是否被 DeepSeek Harness 占用？先退出宿主再试）" }
-        if ($had) {
-            Warn "$Name 安装前就存在：备份里没有旧版本，已删除当前版本；如需旧版请从你自己的备份恢复"
-        } else {
-            Ok "移除安装时新增的目录：$Name"
-        }
+        Ok "移除安装时新增的目录：$Name"
     } else {
         Say "  · $Name 目录不在（已处于回滚状态）"
     }
@@ -263,7 +273,8 @@ if ($Single) {
     if ($WantGateway) { Remove-Cordis }
     if ($WantGateway) {
         Remove-PluginDir $GatewayName
-        Remove-NewDeps
+        # 网关安装前就有（升级）→ 目录保留，它补装的运行依赖也保留，否则保留的目录跑不起来。
+        if (-not (Test-PluginHad $GatewayName)) { Remove-NewDeps }
     }
     if ($WantDsBot) { Remove-PluginDir $DsBotName }
 } else {
@@ -283,7 +294,7 @@ if ($Single) {
         Say '  ! 备份里没有 cordis.patch.yml，跳过'
     }
 
-    # state.txt：new:* 表示安装前没有 → 删掉；had:* 表示原来有 → 删当前版本并提示自备旧版
+    # state.txt：new:* 表示安装前没有 → 删掉；had:* 表示原来有 → 保留当前目录并提示自备旧版
     foreach ($line in (Get-Content -LiteralPath $stateFile -Encoding ASCII)) {
         $line = $line.TrimEnd("`r")
         if ($line -like 'new:*') {
@@ -295,9 +306,7 @@ if ($Single) {
             }
         } elseif ($line -like 'had:*') {
             $name = $line.Substring(4)
-            $target = & $Join $Modules $name
-            Say "  ! $name 安装前就存在：已删除当前版本，如需旧版本请从你自己的备份恢复"
-            if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+            Say "  ! $name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复"
         } elseif ($line -like 'new-dep:*') {
             $dep = $line.Substring(8)
             $target = & $Join $Modules $dep

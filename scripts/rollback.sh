@@ -208,17 +208,24 @@ remove_gateway_block() {
     say "  · cordis.patch.yml 里没有本安装追加的配置块（保留你的设置）"
     return 0
   fi
+  # 升级场景：安装前这份备份里已经有我们追加的块，说明它本来就该在 → 保留。
+  if [ -f "$backup" ] && grep -qF "$GATEWAY_BLOCK_COMMENT" "$backup"; then
+    say "  · 安装前就有该配置块：保留（回到安装前的样子）"
+    return 0
+  fi
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/dsh-suite-cordis.XXXXXX")" || die 2 "无法创建临时文件"
   awk -v mark="$GATEWAY_BLOCK_COMMENT" '
     { line = $0 }
     skip == 1 {
       if (line == "") next
-      if (line ~ /^- id: mobile-gateway[[:space:]]*$/) next
       if (line ~ /^[[:space:]]/) next
+      # 安装块的块首 `- id: mobile-gateway` 只认一次；之后再出现顶格行（例如用户自己
+      # 紧跟其后的 `- id: mobile-gateway` 块）就结束跳过，把它原样留下。
+      if (seenid == 0 && line ~ /^- id: mobile-gateway[[:space:]]*$/) { seenid = 1; next }
       skip = 0
     }
-    index(line, mark) == 1 { skip = 1; next }
+    index(line, mark) == 1 { skip = 1; seenid = 0; next }
     { lines[++count] = line }
     END { for (i = 1; i <= count; i++) print lines[i] }
   ' "$file" > "$tmp" || { rm -f "$tmp"; die 2 "处理 cordis.patch.yml 失败"; }
@@ -237,16 +244,18 @@ remove_gateway_block() {
   ok "cordis.patch.yml 已撤除本安装追加的移动网关配置块"
 }
 
+plugin_had() { grep -qx "had:$1" "$BACKUP/state.txt" 2>/dev/null; }
+
 remove_plugin_dir() {
-  local name="$1" had=0
-  grep -qx "had:$name" "$BACKUP/state.txt" 2>/dev/null && had=1
+  local name="$1"
+  if plugin_had "$name"; then
+    # 安装前就有这个目录：备份里没有旧版本可还原，删掉只会让用户两边都没有。
+    warn "$name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复"
+    return 0
+  fi
   if [ -e "$MODULES/$name" ] || [ -L "$MODULES/$name" ]; then
     rm -rf "$MODULES/$name" || die 2 "删除插件目录失败：$MODULES/$name（是否被 DeepSeek Harness 占用？先退出宿主再试）"
-    if [ "$had" -eq 1 ]; then
-      warn "$name 安装前就存在：备份里没有旧版本，已删除当前版本；如需旧版请从你自己的备份恢复"
-    else
-      ok "移除安装时新增的目录：$name"
-    fi
+    ok "移除安装时新增的目录：$name"
   else
     say "  · $name 目录不在（已处于回滚状态）"
   fi
@@ -283,7 +292,8 @@ if [ "$SINGLE" -eq 1 ]; then
   [ "$WANT_GATEWAY" -eq 1 ] && remove_gateway_block
   if [ "$WANT_GATEWAY" -eq 1 ]; then
     remove_plugin_dir "$GATEWAY_NAME"
-    remove_new_deps
+    # 网关安装前就有（升级）→ 目录保留，它补装的运行依赖也跟着保留，否则保留的目录跑不起来。
+    plugin_had "$GATEWAY_NAME" || remove_new_deps
   fi
   [ "$WANT_DSBOT" -eq 1 ] && remove_plugin_dir "$DSBOT_NAME"
 else
@@ -301,11 +311,11 @@ else
     say "  ! 备份里没有 cordis.patch.yml，跳过"
   fi
 
-  # state.txt 里 `new:` 表示安装前没有这个目录 → 回滚时删掉；`had:` 表示原来有 → 提示手动恢复
+  # state.txt 里 `new:` 表示安装前没有这个目录 → 回滚时删掉；`had:` 表示原来有 → 保留当前目录并提示
   while IFS= read -r line; do
     case "$line" in
       new:*) name="${line#new:}"; rm -rf "$MODULES/$name" && ok "移除安装时新增的目录：$name";;
-      had:*) name="${line#had:}"; say "  ! $name 安装前就存在：已删除当前版本，如需旧版本请从你自己的备份恢复"; rm -rf "$MODULES/$name";;
+      had:*) name="${line#had:}"; warn "$name 安装前就存在：备份里没有旧版本，保留当前目录（不删除）；如需旧版请从你自己的备份恢复";;
       new-dep:*) dep="${line#new-dep:}"; rm -rf "$MODULES/$dep" && ok "移除补装的运行依赖：$dep";;
       had-dep:*) : ;;
     esac

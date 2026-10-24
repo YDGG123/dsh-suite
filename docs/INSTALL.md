@@ -33,12 +33,31 @@
 
 ## 1. 环境自检（四条都过再往下）
 
+### 1.0 先把本仓库弄到电脑上（二选一）
+
+**方式 A · 网页下载 ZIP（电脑上没有 git 时用这个，最简单）**
+
+1. 浏览器打开 https://github.com/YDGG123/dsh-suite
+2. 绿色 **Code** 按钮 → **Download ZIP**
+3. 右键 ZIP → 全部解压到任意目录（如 `D:\dsh-suite`）
+4. 之后所有"在仓库根目录执行"= 在解压出的 `dsh-suite-main` 目录里执行
+
+**方式 B · git clone（电脑上有 git 时）**
+
+```powershell
+git clone https://github.com/YDGG123/dsh-suite.git
+```
+
+- **预期**：得到 `dsh-suite` 目录，里面有 `README.md`、`app`、`plugins`、`scripts`
+- **失败**：下载慢/失败 → 挂代理重试，或用方式 A
+
 ### 1.1 桌面 DeepSeek Harness 版本 ≥ 0.2.1-rc.1
 
 打开 DeepSeek Harness →（左下角/设置）**关于** → 看版本号。
 
 - **预期**：`0.2.1-rc.1` 或更高
-- **失败**：版本低于此 → 先升级 DSH 再回来；版本不够插件不会加载
+- **失败**：版本低于此 → 先升级 DSH 再回来；版本不够插件不会加载。
+  - **DSH 从哪获取/升级**：DeepSeek Harness 官方发布页 https://github.com/deepseek-ai/deepseek-harness/releases （下载对应系统的安装包覆盖安装；Mac 也可在应用内检查更新）。装的是正式版也没关系，只要 ≥ 0.2.1-rc.1。
 
 ### 1.2 打开 PowerShell（Windows）
 
@@ -53,6 +72,7 @@
 
 - **预期**：`16.x`，且手机上能打开 **TrollStore**（巨魔）
 - **失败**：没有巨魔 → 走 [3.5 备选：无巨魔时自签安装](#35-备选无巨魔时自签安装sideloadly)
+  - **想装巨魔**：TrollStore 只支持特定 iOS 版本区间，安装方法见其官方文档 https://github.com/opa334dev/TrollStore （支持范围与安装方式以该页为准；装巨魔本身超出本指南范围）
 
 ### 1.4 手机与电脑在同一 Wi-Fi
 

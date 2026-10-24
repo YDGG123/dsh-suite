@@ -211,15 +211,15 @@ bash scripts/install.sh --verify-only
 
 ### 3.1 拿到 IPA
 
-仓库里就有：`app/DshMobile-iOS16-v1.7.8-29.unsigned.ipa`
+仓库里就有：`app/DshMobile-iOS16-20261025-0600.ipa`
 
 建议执行（这是自动可查的完整性检查，AI 助手请执行）：在仓库根目录
 
 ```powershell
-Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
+Get-FileHash app\DshMobile-iOS16-20261025-0600.ipa -Algorithm SHA256
 ```
 
-- **预期**：`5F8AE6A7E46DC0020EB00BACA635EE42428897AC828E55A994095535124DD39F`，大小 `10,441,930` 字节
+- **预期**：`8C0E2DDE8B5A0C18DF6FC91592C386E4E025562F50F3CD8EB0C934885039297F`，大小 `13,584,931` 字节
 - **对不上** → 重新下载本仓库，别用这个文件
 
 ### 3.2 把 IPA 传到手机
@@ -255,7 +255,7 @@ Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
 > **只有 1.3 发现手机没有巨魔时才用这节。** 代价：**要 Apple ID、7 天过期需重签**。
 
 1. 电脑装 [Sideloadly](https://sideloadly.io/)，数据线连 iPhone
-2. 把 `app/DshMobile-iOS16-v1.7.8-29.unsigned.ipa` 拖进 Sideloadly，填 Apple ID → Start
+2. 把 `app/DshMobile-iOS16-20261025-0600.ipa` 拖进 Sideloadly，填 Apple ID → Start
 3. 手机上信任证书：设置 → 通用 → VPN 与设备管理 → 开发者 App → 信任
 4. **7 天到期**后 App 打不开 → 同样方式重签一次；**配对信息不会丢**
 
@@ -399,8 +399,8 @@ iOS 只在启动时读语言设置：按 App 内提示**退出再打开**（设�
 
 ```
 app/
-  DshMobile-iOS16-v1.7.8-29.unsigned.ipa   10,441,930 B
-  sha256 5f8ae6a7e46dc0020eb00baca635ee42428897ac828e55a994095535124dd39f
+  DshMobile-iOS16-20261025-0600.ipa   13,584,931 B
+  sha256 8c0e2dde8b5a0c18df6fc91592c386e4e025562f50f3cd8eb0c934885039297f
 plugins/
   dsh-plugin-mobile-gateway/   0.10.4   （含 lib/ 产物，装完即用）
   ds-bot/                      0.2.0    （含 client.js 产物）

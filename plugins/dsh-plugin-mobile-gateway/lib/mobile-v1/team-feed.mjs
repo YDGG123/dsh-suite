@@ -108,6 +108,12 @@ export function createTeamFeed({
   mergeMs = PATCH_MERGE_MS,
   pollMs = FALLBACK_POLL_MS,
   orderMs = ORDER_POLL_MS,
+  // 单个头像的上限，**按 data URL 字符串长度算**。
+  // 产品红线是「**解码后 ≤32KB**」，base64 膨胀 ×1.37 ⇒ 字符串上限 44KB（= 32×1.37 向上取整）。
+  // 20 个 Bot 满配（base64）约 0.87MB。超限只丢 image、保留 shape/color。
+  // 历史的 2MB 出向阈值已不再相关（团队流已放宽到 8MB），红线现在的意义是
+  // 「配对/首屏更快、内存更省」，不是「避免重连循环」。
+  maxAvatarBytes = 44 * 1024,
 } = {}) {
   const localInstanceId = `gateway-${crypto.randomUUID()}`
   const subscribers = new Set()
@@ -183,6 +189,72 @@ export function createTeamFeed({
     emit(frame)
   }
 
+  /**
+   * 快照分帧：超大快照（头像 data URL 撑大）先发**去掉 image 的主帧**，
+   * 再按批补 `{kind:'avatar'}` 帧。这样手机能立刻拿到名册，头像随后补齐，
+   * 也不会因为单帧过大撞上 WS 背压（历史教训：20 bots × 300KB 单帧 5.9MB）。
+   * 返回 { primary, batches }；不需要分帧时 batches 为空数组。
+   */
+  function splitSnapshot(frame, { maxBytes = 1_000_000, batchBytes = 256 * 1024 } = {}) {
+    const size = JSON.stringify(frame).length
+    const withAvatar = (frame.bots ?? []).filter(bot => typeof bot?.avatar?.image === 'string' && bot.avatar.image)
+    if (size <= maxBytes || withAvatar.length === 0) return { primary: frame, batches: [] }
+
+    const primary = { ...frame, bots: (frame.bots ?? []).map(bot => {
+      if (typeof bot?.avatar?.image !== 'string' || !bot.avatar.image) return bot
+      const avatar = { ...bot.avatar }
+      delete avatar.image
+      return { ...bot, avatar }
+    }), avatarDeferred: true }
+
+    const batches = []
+    let current = []
+    let currentBytes = 0
+    const flush = () => {
+      if (current.length === 0) return
+      batches.push({ v: TEAM_FEED_VERSION, kind: 'avatar', instanceId: frame.instanceId, seq: frame.seq, at: frame.at, items: current })
+      current = []
+      currentBytes = 0
+    }
+    for (const bot of withAvatar) {
+      const items = [{ id: bot.id, avatar: bot.avatar }]
+      const bytes = JSON.stringify(items).length
+      if (currentBytes + bytes > batchBytes) flush()
+      current.push(items[0])
+      currentBytes += bytes
+    }
+    flush()
+    log(`team-feed: snapshot ${Math.round(size / 1024)}KB > ${Math.round(maxBytes / 1024)}KB, deferring ${withAvatar.length} avatars in ${batches.length} frame(s)`)
+    return { primary, batches }
+  }
+
+  const avatarWarned = new Set()
+  // iOS 的 UIImage(data:) 只认位图：SVG（以及任何非 png/jpeg）会静默回落成形状块。
+  const DECODABLE_PREFIXES = ['data:image/png;base64,', 'data:image/jpeg;base64,']
+
+  /** 超大头像/不可解码格式兜底：只裁 image，保留 shape/color（手机端回落成同色块 + 形状符号）。 */
+  function limitAvatar(entity, id) {
+    const image = entity?.avatar?.image
+    if (typeof image !== 'string' || !image) return entity
+    if (!DECODABLE_PREFIXES.some(prefix => image.startsWith(prefix))) {
+      entity.avatar = { ...entity.avatar }
+      delete entity.avatar.image
+      if (!avatarWarned.has(id)) {
+        avatarWarned.add(id)
+        log(`team-feed: avatar of ${id} has a non-decodable prefix (${image.slice(0, 28)}…), dropped image; iOS only decodes png/jpeg`)
+      }
+      return entity
+    }
+    if (image.length <= maxAvatarBytes) return entity
+    entity.avatar = { ...entity.avatar }
+    delete entity.avatar.image
+    if (!avatarWarned.has(id)) {
+      avatarWarned.add(id)
+      log(`team-feed: avatar of ${id} is ${Math.round(image.length / 1024)}KB (> ${Math.round(maxAvatarBytes / 1024)}KB), dropped image and kept shape/color`)
+    }
+    return entity
+  }
+
   function normalizeSnapshot(raw) {
     const bots = Array.isArray(raw?.bots) ? raw.bots.filter(isObject) : []
     const rooms = Array.isArray(raw?.rooms) ? raw.rooms.filter(isObject) : []
@@ -198,7 +270,7 @@ export function createTeamFeed({
       bots, rooms,
       pending: Array.isArray(raw?.pending) ? raw.pending.filter(isObject) : [],
     }
-    for (const bot of bots) staticBots.set(bot.id, clone(bot))
+    for (const bot of bots) { limitAvatar(bot, bot.id); staticBots.set(bot.id, clone(bot)) }
     for (const room of rooms) staticRooms.set(room.id, clone(room))
     // avatar/color 属于静态字段：随快照进入本地缓存，新订阅者靠快照拿到，增量帧不再重复传。
     if (typeof frame.instanceId === 'string') instanceId = frame.instanceId
@@ -347,6 +419,8 @@ export function createTeamFeed({
     if (Number.isSafeInteger(frame.seq)) lastServiceSeq = frame.seq
     const ops = (Array.isArray(frame.ops) ? frame.ops : []).map(normalizeOp).filter(Boolean)
     if (ops.length === 0) return
+    // 结构帧（add/update）里的头像也受上限约束，与快照同口径。
+    for (const op of ops) if (isObject(op.entity)) limitAvatar(op.entity, op.id)
     if (ops.length > MAX_OPS) {
       // 防御：超大帧改发快照，别让手机处理一帧上千条 op（契约 §4）。
       pending = new Map()
@@ -484,6 +558,7 @@ export function createTeamFeed({
       try { return resolveService() != null } catch { return false }
     },
     snapshot,
+    splitSnapshot,
     subscribe(listener) {
       if (typeof listener !== 'function') throw new TypeError('team feed listener must be a function')
       subscribers.add(listener)

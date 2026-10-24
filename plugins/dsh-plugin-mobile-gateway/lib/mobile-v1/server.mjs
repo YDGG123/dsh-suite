@@ -356,9 +356,13 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
   teamWss.on('connection', socket => {
     const state = { deviceId: null, authenticated: false, busy: false, ready: false, unsubscribers: [] }
     const buffer = []
+    // 团队流的背压阈值要比按会话的 /events 宽：**快照是一次性大帧**
+    // （20 个 Bot 的角色头像 data URL 合计可达数 MB，契约明确「可能较大、只在快照出现一次」）。
+    // 2MB 会在真实头像下直接把手机踢下线（4408）→ 重连 → 再踢，形成循环。
+    const TEAM_BUFFER_LIMIT = 8 * 1024 * 1024
     const send = frame => {
       if (socket.readyState !== WebSocket.OPEN) return
-      if (socket.bufferedAmount > 2 * 1024 * 1024) { socket.close(4408, 'Reconnect to catch up'); return }
+      if (socket.bufferedAmount > TEAM_BUFFER_LIMIT) { socket.close(4408, 'Reconnect to catch up'); return }
       socket.send(JSON.stringify(frame))
     }
     teamSockets.set(socket, state)
@@ -408,7 +412,11 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
           state.unsubscribers.push(team.subscribe(listen(team)))
           const snapshot = await team.snapshot()
           snapshotSeqs.team = snapshot.seq ?? 0
-          send(snapshot)
+          // 快照过大（头像 data URL）时先发名册主帧，再分批补头像帧：
+          // 手机先有内容，头像随后到，且不会因为单帧几 MB 撞背压。
+          const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
+          send(plan.primary)
+          for (const batch of plan.batches) send(batch)
         }
         if (cards) {
           state.unsubscribers.push(cards.subscribe(listen(cards)))

@@ -54,6 +54,7 @@ git clone https://github.com/YDGG123/dsh-suite.git
 ### 1.1 桌面 DeepSeek Harness 版本 ≥ 0.2.1-rc.1
 
 打开 DeepSeek Harness →（左下角/设置）**关于** → 看版本号。
+  （AI 可执行核验：在 PowerShell 里跑 `Get-Content "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\app.asar.unpacked\dsh\package.json" | Select-String version`；装在别处以应用内"关于"显示为准。）
 
 - **预期**：`0.2.1-rc.1` 或更高
 - **失败**：版本低于此 → 先升级 DSH 再回来；版本不够插件不会加载。
@@ -141,7 +142,9 @@ macOS：`bash scripts/install.sh --only-dsbot`
 
 ---
 
-## 3. 第二步：手机装 App（TrollStore 主线）
+## 3. 第二步：手机装 App
+
+> ⚠️ **本步需要人手操作**（传文件到手机、在 TrollStore 里点安装）——AI 助手执行到此处应把操作交回用户，等用户确认后再继续校验。（TrollStore 主线）
 
 > 巨魔安装 = **免签名、永久有效**，不会 7 天过期。**不需要 Apple ID。**
 
@@ -149,7 +152,7 @@ macOS：`bash scripts/install.sh --only-dsbot`
 
 仓库里就有：`app/DshMobile-iOS16-v1.7.8-29.unsigned.ipa`
 
-可选校验（确认真没下载坏）：在仓库根目录
+建议执行（这是自动可查的完整性检查，AI 助手请执行）：在仓库根目录
 
 ```powershell
 Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
@@ -198,6 +201,8 @@ Get-FileHash app\DshMobile-iOS16-v1.7.8-29.unsigned.ipa -Algorithm SHA256
 ---
 
 ## 4. 第三步：配对（手机 ↔ 桌面）
+
+> ⚠️ **本步需要人手操作**（手机扫码、桌面点批准）——AI 助手执行到此处应把操作交回用户。
 
 1. 桌面 DeepSeek Harness 里打开**移动网关**，确认是开启状态（能看到本机地址与端口）
 2. 在网关上**生成配对码 / 二维码**

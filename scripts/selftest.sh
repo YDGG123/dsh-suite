@@ -17,6 +17,10 @@
 #   R12b 用户块紧跟安装块之后                          → 只撤我们那块，用户块必须留下
 #   R14 安装前已有 ds-bot 目录（had:）                 → 只撤登记、目录保留（删了就红）
 #   R15 整份回滚遇 had:                               → 目录保留；new: 的插件仍撤掉
+#   R16 文档与 IPA/清单一致                            → 一致通过；改坏一个 sha 必须红
+#   R17 漏传 --ipa                                     → 参数非法，退出码 2（不许静默沿用旧 sha）
+#   R18 相对路径 --gateway                             → 按调用者 cwd 解析并成功同步
+#   R19 换新 IPA 后自动改写文档                        → 8 处更新、旧值 0 命中、自检通过
 #   R13 装两次再只撤网关                              → 上一轮追加的块要撤；目录按 had 保留
 #
 # 用法：bash scripts/selftest.sh
@@ -219,6 +223,52 @@ assert_present "R15 安装前就有的网关目录被保留" "$P15/node_modules/
 assert_present "R15 它的运行依赖也保留" "$P15/node_modules/ws"
 assert_absent  "R15 ds-bot（new:）仍被撤掉" "$P15/node_modules/ds-bot"
 
+# R16–R19：维护者同步脚本（sync-from-dev.sh）的闸门。全部在临时副本里跑，不碰本仓库。
+fake_repo() {
+  local dst="$1"
+  mkdir -p "$dst/scripts" "$dst/docs" "$dst/app" "$dst/plugins"
+  cp "$REPO_ROOT/scripts/sync-from-dev.sh" "$dst/scripts/"
+  cp "$REPO_ROOT/README.md" "$dst/README.md"
+  cp "$REPO_ROOT/docs/INSTALL.md" "$dst/docs/INSTALL.md"
+  cp "$REPO_ROOT/plugins/manifest.json" "$dst/plugins/manifest.json"
+  cp "$REPO_ROOT"/app/*.ipa "$dst/app/"
+}
+
+# R16：文档里的 IPA 名/大小/sha 必须与实际 app/ + manifest 一致（--check-docs，只读）。
+FAKE16="$SANDBOX/repo16"
+fake_repo "$FAKE16"
+expect_code "R16 文档与 IPA/清单一致（应通过）" 0 bash "$FAKE16/scripts/sync-from-dev.sh" --check-docs
+node -e 'const fs=require("fs");const p=process.argv[1];fs.writeFileSync(p,fs.readFileSync(p,"utf8").replace(/sha256: [0-9a-f]{64}/,"sha256: "+"0".repeat(64)))' "$FAKE16/README.md"
+expect_code "R16 文档被改坏（应红）" 1 bash "$FAKE16/scripts/sync-from-dev.sh" --check-docs
+
+# R17：漏传 --ipa 也必须红——不许静默沿用旧 sha256（参数校验在触碰任何文件之前）。
+expect_code "R17 缺 --ipa 必须红" 2 bash "$FAKE16/scripts/sync-from-dev.sh" --dsbot "$FAKE16"
+
+# R18：相对路径按调用者 cwd 解析（脚本内部会 cd 到仓库根，锚点不能漂）。
+FAKE18="$SANDBOX/repo18"
+fake_repo "$FAKE18"
+mkdir -p "$SANDBOX/gwsrc/lib" "$SANDBOX/gwsrc/dev/harness" "$SANDBOX/gwsrc/test"
+printf 'export const ok=1\n' > "$SANDBOX/gwsrc/lib/index.mjs"
+printf '{"name":"dsh-plugin-mobile-gateway"}\n' > "$SANDBOX/gwsrc/package.json"
+printf 'must not ship\n' > "$SANDBOX/gwsrc/dev/harness/x.bin"
+printf 'must not ship\n' > "$SANDBOX/gwsrc/test/x.js"
+expect_code "R18 相对路径按调用者 cwd 解析" 0 bash -c 'cd "$1" && bash "$2" --gateway gwsrc --no-ipa' _ "$SANDBOX" "$FAKE18/scripts/sync-from-dev.sh"
+assert_text "R18 网关确实被同步" "$FAKE18/plugins/dsh-plugin-mobile-gateway/lib/index.mjs" "export const ok=1"
+assert_absent "R18 dev/ 没被带进发布树" "$FAKE18/plugins/dsh-plugin-mobile-gateway/dev"
+assert_absent "R18 test/ 没被带进发布树" "$FAKE18/plugins/dsh-plugin-mobile-gateway/test"
+
+# R19：换一个新 IPA 同步后，README/INSTALL 的 8 处必须自动改写，旧值 0 命中。
+FAKE19="$SANDBOX/repo19"
+fake_repo "$FAKE19"
+NEWIPA="$SANDBOX/DshMobile-iOS16-20261025-999999.ipa"
+head -c 4096 /dev/urandom > "$NEWIPA"
+expect_code "R19 带新 IPA 同步（应成功）" 0 bash "$FAKE19/scripts/sync-from-dev.sh" --gateway "$SANDBOX/gwsrc" --ipa "$NEWIPA"
+assert_text    "R19 README 已改名" "$FAKE19/README.md" "$(basename "$NEWIPA")"
+assert_text    "R19 INSTALL 已改名" "$FAKE19/docs/INSTALL.md" "app/$(basename "$NEWIPA")"
+assert_no_text "R19 旧名 0 命中" "$FAKE19/README.md" "DshMobile-iOS16-v1.7.8-29.unsigned.ipa"
+assert_no_text "R19 旧 sha 0 命中" "$FAKE19/docs/INSTALL.md" "5f8ae6a7e46dc0020eb00baca635ee42428897ac828e55a994095535124dd39f"
+expect_code "R19 改完后文档自检通过" 0 bash "$FAKE19/scripts/sync-from-dev.sh" --check-docs
+
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"
 [ "$failn" -eq 0 ] || exit 1
-printf '（说明：R1–R6、R11 必须“红”，R7–R15 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'
+printf '（说明：R1–R6、R11 必须“红”，R7–R19 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'

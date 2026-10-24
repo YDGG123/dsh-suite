@@ -45,7 +45,7 @@ scripts/
   rollback.ps1 / rollback.sh  # 一键回滚（整份快照，或 -OnlyGateway/-OnlyDsBot 只撤一个）
   selftest.sh                 # 反向测试：17 种场景必须按预期表现（维护者/CI 用）
   TESTING.md                  # 反向测试证据：各失败场景的触发方式与退出码
-  sync-from-dev.sh            # 维护者：从开发仓库同步新版本并重建 manifest
+  sync-from-dev.sh            # 维护者：白名单复制 + 原子替换 + 重建 manifest + 自动改写文档
 docs/
   INSTALL.md                  # 安装指南（AI 可照读执行）
 ```

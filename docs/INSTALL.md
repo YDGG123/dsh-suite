@@ -397,7 +397,7 @@ plugins/
 scripts/
   install.ps1 / install.sh     # 安装（默认全装；-OnlyGateway / -OnlyDsBot 选装）
   rollback.ps1 / rollback.sh   # 回滚（同样按插件粒度）
-  sync-from-dev.sh             # 维护者：从开发仓库同步版本
+  sync-from-dev.sh             # 维护者：同步版本（白名单复制、原子替换、重建 manifest、自动改写本文档的 IPA 名/大小/sha）
 docs/
   INSTALL.md                   # 本文
 ```

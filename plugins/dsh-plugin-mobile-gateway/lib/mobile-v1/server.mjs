@@ -1,6 +1,8 @@
 import { WebSocketServer, WebSocket } from 'ws'
-import { BridgeError, createAuthStore, digest } from './auth.mjs'
+import { ACCESS_TTL_MS, BridgeError, REFRESH_TTL_MS, createAuthStore, digest } from './auth.mjs'
 import { normalizeMobileV1Origin } from './public-url.mjs'
+import { CHUNK_CAPABILITY, MAX_FRAME_BYTES, MAX_REASSEMBLED_BYTES, MAX_STREAMS_PER_CONNECTION, clientCapabilities, planChunks } from './chunked.mjs'
+import { randomUUID } from 'node:crypto'
 
 const PREFIX = '/mobile/v1'
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost'])
@@ -51,7 +53,47 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
     if (parsed.protocol !== 'https:' && !(config.devAllowInsecure === true && parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname.replace(/^\[|\]$/g, '')))) throw new Error('Mobile publicUrl must use HTTPS. Loopback HTTP requires devAllowInsecure.')
     publicUrl = parsed.origin
   }
+  // 心跳（sync-resume-v1）：客户端按 interval 发应用层 ping，超 timeout 没收到任何帧判死重连。
+  // 与已有的 WS 层 15s ping/pong 互补：后者清服务端的僵死连接，前者发现「TCP 半开、本端以为还活着」。
+  const HEARTBEAT_INTERVAL_SECONDS = 25
+  const HEARTBEAT_TIMEOUT_SECONDS = 75
+  const SYNC_MAX_DELTAS = 200
+  const SYNC_MAX_DELTAS_LIMIT = 1000
+  // 常驻订阅：没有手机连着时也保持 dsBotTeam 订阅，断线期间的事件才进得了回放留窗。
+  const releaseRetention = typeof team?.retain === 'function' ? team.retain() : null
   const sockets = new Map()
+  // 统一出口：一条帧的序列化字节超过 maxFrameBytes 且客户端声明了分块能力时，
+  // 改发 chunk 序列；否则原样发。所有大响应（团队/卡片快照、delta、事件帧）都走这里。
+  // 串行发送：一条流发完再发下一条，因此同一连接的实际并发恒为 1（≤ 公布的上限），
+  // 帧与帧之间的顺序不会被分块打乱。
+  const emitFrame = ({ frame, json, state, sendJson, label }) => {
+    if (state.chunked !== true) return sendJson(json)
+    let plan
+    try {
+      plan = planChunks(json, {
+        finalKind: String(frame?.kind ?? frame?.type ?? 'frame'),
+        streamId: randomUUID(),
+        activeStreams: state.streams ?? 0,
+      })
+    } catch (error) {
+      log(`${label}: could not plan a chunked frame: ${error?.message ?? error}`)
+      return false
+    }
+    if (plan.mode === 'plain') return sendJson(json)
+    if (plan.mode === 'refused') {
+      log(`${label}: ${frame?.kind ?? frame?.type ?? 'frame'} frame is ${plan.bytes} bytes; not sent (${plan.reason}, limits ${MAX_FRAME_BYTES}/${MAX_REASSEMBLED_BYTES})`)
+      return false
+    }
+    state.streams = (state.streams ?? 0) + 1
+    try {
+      for (const chunk of plan.chunks) {
+        if (!sendJson(JSON.stringify(chunk))) return false
+      }
+      return true
+    } finally {
+      state.streams = (state.streams ?? 0) - 1
+    }
+  }
   const requestControllers = new Map()
   const auth = await createAuthStore(home, { issueGatewayDevice, onRevoke: id => {
     for (const [socket, state] of sockets) if (state.deviceId === id) socket.close(4403, 'Device revoked')
@@ -193,7 +235,20 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
             teamDegraded: team ? team.sourceAvailable === false : true,
             teamServing: team?.degraded === false,
             cards: !!cards, cardsDegraded: cards ? cards.sourceAvailable === false : true,
-            cardsServing: cards?.degraded === false },
+            cardsServing: cards?.degraded === false,
+            // 凭证有效期（秒）：客户端据此算主动刷新间隔；网关改 TTL 不必再发客户端版本。
+            accessTokenTtlSeconds: ACCESS_TTL_MS / 1000,
+            refreshTokenTtlSeconds: REFRESH_TTL_MS / 1000,
+            // 大响应分块（chunked-frames-v1）的三个上限，单位字节 / 条：
+            // 客户端声明能力后才会收到 chunk 帧；老客户端永远收整帧。
+            maxFrameBytes: MAX_FRAME_BYTES,
+            maxReassembledBytes: MAX_REASSEMBLED_BYTES,
+            maxStreamsPerConnection: MAX_STREAMS_PER_CONNECTION,
+            // 心跳（控制面）：客户端按 interval 发 ping，超 timeout 判死重连。
+            heartbeatIntervalSeconds: HEARTBEAT_INTERVAL_SECONDS,
+            heartbeatTimeoutSeconds: HEARTBEAT_TIMEOUT_SECONDS,
+            // 断线补增量：auth 可带 resume，或连接中发 sync.from。
+            syncResume: typeof team?.history === 'function' },
           compatibility: adapter.compatibility?.() ?? {} }
       } else if (method === 'POST' && path === `${PREFIX}/pairings`) {
         rate(`pair:${ip}`, 10)
@@ -303,13 +358,20 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
   }
   wss.on('connection', socket => {
     const controller = new AbortController()
-    const state = { controller, deviceId: null, authenticated: false, busy: false }
+    const state = { controller, deviceId: null, authenticated: false, busy: false, chunked: false, streams: 0 }
     sockets.set(socket, state)
     const timeout = setTimeout(() => socket.close(4401, 'Authentication required'), 5000)
+    const sendRaw = json => {
+      if (socket.readyState !== WebSocket.OPEN) return false
+      if (socket.bufferedAmount > 2 * 1024 * 1024) { socket.close(4408, 'Reconnect to catch up'); return false }
+      socket.send(json)
+      return true
+    }
     const send = event => {
-      if (socket.readyState !== WebSocket.OPEN) return
-      if (socket.bufferedAmount > 2 * 1024 * 1024) { socket.close(4408, 'Reconnect to catch up'); return }
-      socket.send(JSON.stringify(state.deviceId ? forDevice(event, state.deviceId) : event))
+      const frame = state.deviceId ? forDevice(event, state.deviceId) : event
+      let json
+      try { json = JSON.stringify(frame) } catch (error) { log(`mobile-v1: could not serialize an event frame: ${error?.message ?? error}`); return false }
+      return emitFrame({ frame, json, state, sendJson: sendRaw, label: 'mobile-v1 events' })
     }
     let expiry
     let alive = true
@@ -317,11 +379,27 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
     socket.on('close', () => { clearTimeout(timeout); clearInterval(expiry); controller.abort(); sockets.delete(socket) })
     socket.on('error', () => controller.abort())
     socket.on('message', async bytes => {
-      if (state.busy || state.authenticated) { socket.close(4400, 'Only an initial authentication frame is accepted'); return }
+      let frame
+      try { frame = JSON.parse(bytes.toString()) } catch {
+        if (state.authenticated) { send({ type: 'error', error: { code: 'INVALID_JSON', message: 'Control frames must be JSON.', details: {} } }); return }
+        state.busy = true
+        try { fail(400, 'INVALID_JSON', 'Invalid authentication frame.') } catch {}
+        return
+      }
+      // 认证后只接受心跳（sync-resume-v1 的补增量只属于团队流）。
+      if (state.authenticated) {
+        if (frame?.type === 'ping') {
+          const at = Date.now()
+          if (state.lastPingAt === undefined || at - state.lastPingAt >= 2000) { state.lastPingAt = at; send({ type: 'pong', at }) }
+          return
+        }
+        if (frame?.type === 'pong') return
+        socket.close(4400, 'Only control frames are accepted after authentication')
+        return
+      }
+      if (state.busy) { socket.close(4400, 'Only an initial authentication frame is accepted'); return }
       state.busy = true
       try {
-        let frame
-        try { frame = JSON.parse(bytes.toString()) } catch { fail(400, 'INVALID_JSON', 'Invalid authentication frame.') }
         if (frame?.type !== 'auth') fail(401, 'UNAUTHORIZED', 'Authenticate before following a conversation.')
         const device = auth.verifyAccess(frame.token)
         if (adapter.capabilities?.().stream !== true) fail(501, 'REDACTED_PROJECTION_REQUIRED', 'The upstream redacted transcript extension is unavailable.')
@@ -329,6 +407,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
         if ([...sockets.values()].filter(item => item.deviceId === device.id).length >= 5) fail(429, 'CONNECTION_LIMIT', 'Close another connection on this device.')
         await adapter.target(frame.conversationId, controller.signal)
         auth.verifyAccess(frame.token)
+        state.chunked = clientCapabilities(frame).has(CHUNK_CAPABILITY)
         state.deviceId = device.id
         state.authenticated = true
         clearTimeout(timeout)
@@ -354,16 +433,22 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
     })
   })
   teamWss.on('connection', socket => {
-    const state = { deviceId: null, authenticated: false, busy: false, ready: false, unsubscribers: [] }
+    const state = { deviceId: null, authenticated: false, busy: false, ready: false, unsubscribers: [], chunked: false, streams: 0 }
     const buffer = []
     // 团队流的背压阈值要比按会话的 /events 宽：**快照是一次性大帧**
     // （20 个 Bot 的角色头像 data URL 合计可达数 MB，契约明确「可能较大、只在快照出现一次」）。
     // 2MB 会在真实头像下直接把手机踢下线（4408）→ 重连 → 再踢，形成循环。
     const TEAM_BUFFER_LIMIT = 8 * 1024 * 1024
+    const sendRaw = json => {
+      if (socket.readyState !== WebSocket.OPEN) return false
+      if (socket.bufferedAmount > TEAM_BUFFER_LIMIT) { socket.close(4408, 'Reconnect to catch up'); return false }
+      socket.send(json)
+      return true
+    }
     const send = frame => {
-      if (socket.readyState !== WebSocket.OPEN) return
-      if (socket.bufferedAmount > TEAM_BUFFER_LIMIT) { socket.close(4408, 'Reconnect to catch up'); return }
-      socket.send(JSON.stringify(frame))
+      let json
+      try { json = JSON.stringify(frame) } catch (error) { log(`mobile-v1 team: could not serialize a frame: ${error?.message ?? error}`); return false }
+      return emitFrame({ frame, json, state, sendJson: sendRaw, label: 'mobile-v1 team' })
     }
     teamSockets.set(socket, state)
     const timeout = setTimeout(() => socket.close(4401, 'Authentication required'), 5000)
@@ -375,20 +460,77 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
       state.unsubscribers = []
       teamSockets.delete(socket)
     }
+    // ---- 控制面（认证后）：心跳 ping/pong 与断线补增量 sync-resume-v1 ----
+    const replyControl = (code, message) => send({ type: 'error', error: { code, message, details: {} } })
+    const clampDeltas = value => Math.min(Math.max(Number.isSafeInteger(value) ? value : SYNC_MAX_DELTAS, 1), SYNC_MAX_DELTAS_LIMIT)
+    const resnapshot = async (reason) => {
+      if (!team) { replyControl('SYNC_UNAVAILABLE', 'The team feed is not available on this gateway.'); return }
+      const snapshot = await team.snapshot()
+      const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
+      send(plan.primary)
+      for (const batch of plan.batches) send(batch)
+      send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason })
+    }
+    // 回放判定：缺口必须按 base 链（400ms 合并窗口让 seq 跳号是常态，不能按 +1 判）。
+    const replayFrom = async ({ instanceId: wanted, afterSeq, maxDeltas }, reason) => {
+      if (!team || typeof team.history !== 'function') { replyControl('SYNC_UNAVAILABLE', 'This gateway cannot resume a team feed.'); return }
+      if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) { replyControl('SYNC_BAD_REQUEST', 'afterSeq must be a non-negative integer.'); return }
+      if (typeof wanted === 'string' && wanted !== team.instanceId) {
+        replyControl('SYNC_UNKNOWN_INSTANCE', 'The team feed restarted; sending a fresh snapshot.')
+        await resnapshot('unknown-instance')
+        return
+      }
+      const answer = team.history(afterSeq, clampDeltas(maxDeltas))
+      if (answer.mode !== 'ok') {
+        replyControl('SYNC_GAP', 'The resume window does not reach back that far; sending a fresh snapshot.')
+        await resnapshot('gap')
+        return
+      }
+      for (const frame of answer.frames) send(frame)
+      send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? reason : 'caught-up' })
+    }
+    const handleControl = async (frame) => {
+      // auth 首次快照/回放还没跑完时先排队：否则 sync.from 会和快照交错，客户端收到重复帧。
+      if (state.busy) { state.pendingControl = frame; return }
+      if (frame?.type === 'ping') {
+        const at = Date.now()
+        // 限速：2s 内多余的 ping 直接丢弃（客户端正常 25s 一条，不会撞到）。
+        if (state.lastPingAt !== undefined && at - state.lastPingAt < 2000) return
+        state.lastPingAt = at
+        send({ type: 'pong', at })
+        return
+      }
+      if (frame?.type === 'pong') return
+      if (frame?.type === 'sync.from') {
+        const at = Date.now()
+        if (state.lastSyncAt !== undefined && at - state.lastSyncAt < 5000) { replyControl('SYNC_RATE_LIMITED', 'Wait a few seconds before asking again.'); return }
+        state.lastSyncAt = at
+        await replayFrom({ instanceId: frame.instanceId, afterSeq: frame.afterSeq, maxDeltas: frame.maxDeltas }, 'sync.from')
+        return
+      }
+      socket.close(4400, 'Only control frames are accepted after authentication')
+    }
     socket.on('pong', () => { alive = true })
     socket.on('close', teardown)
     socket.on('error', teardown)
     socket.on('message', async bytes => {
-      if (state.busy || state.authenticated) { socket.close(4400, 'Only an initial authentication frame is accepted'); return }
+      let frame
+      try { frame = JSON.parse(bytes.toString()) } catch {
+        if (state.authenticated) { replyControl('INVALID_JSON', 'Control frames must be JSON.'); return }
+        state.busy = true
+        try { fail(400, 'INVALID_JSON', 'Invalid authentication frame.') } catch {}
+        return
+      }
+      if (state.authenticated) { await handleControl(frame); return }
+      if (state.busy) { socket.close(4400, 'Only an initial authentication frame is accepted'); return }
       state.busy = true
       try {
-        let frame
-        try { frame = JSON.parse(bytes.toString()) } catch { fail(400, 'INVALID_JSON', 'Invalid authentication frame.') }
         if (frame?.type !== 'auth') fail(401, 'UNAUTHORIZED', 'Authenticate before subscribing to the team feed.')
         const device = auth.verifyAccess(frame.token)
         // 同一设备最多 5 条连接（与按会话的 /events 同口径），各自独立计数。
         if ([...teamSockets.values()].filter(item => item.deviceId === device.id).length >= 5) fail(429, 'CONNECTION_LIMIT', 'Close another connection on this device.')
         clearTimeout(timeout)
+        state.chunked = clientCapabilities(frame).has(CHUNK_CAPABILITY)
         state.deviceId = device.id
         state.authenticated = true
         expiry = setInterval(() => {
@@ -410,13 +552,39 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
         const snapshotSeqs = { team: 0, cards: 0 }
         if (team) {
           state.unsubscribers.push(team.subscribe(listen(team)))
-          const snapshot = await team.snapshot()
-          snapshotSeqs.team = snapshot.seq ?? 0
-          // 快照过大（头像 data URL）时先发名册主帧，再分批补头像帧：
-          // 手机先有内容，头像随后到，且不会因为单帧几 MB 撞背压。
-          const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
-          send(plan.primary)
-          for (const batch of plan.batches) send(batch)
+          // 断线重连的零往返路径：auth 里带 resume:{instanceId, afterSeq} 就直接补增量，
+          // 命中不了窗口再回快照（省掉「先收整帧快照、再补增量」的浪费）。
+          const resume = state.authenticated && frame && typeof frame.resume === 'object' && frame.resume !== null ? frame.resume : null
+          let resumed = false
+          if (resume && typeof team.history === 'function') {
+            const wanted = typeof resume.instanceId === 'string' ? resume.instanceId : undefined
+            const afterSeq = resume.afterSeq
+            if (typeof wanted === 'string' && wanted !== team.instanceId) {
+              replyControl('SYNC_UNKNOWN_INSTANCE', 'The team feed restarted; sending a fresh snapshot.')
+            } else if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+              replyControl('SYNC_BAD_REQUEST', 'resume.afterSeq must be a non-negative integer.')
+            } else {
+              const answer = team.history(afterSeq, clampDeltas(resume.maxDeltas))
+              if (answer.mode === 'ok') {
+                for (const delta of answer.frames) send(delta)
+                snapshotSeqs.team = team.seq ?? 0
+                send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? 'resume' : 'caught-up' })
+                resumed = true
+              } else {
+                replyControl('SYNC_GAP', 'The resume window does not reach back that far; sending a fresh snapshot.')
+              }
+            }
+          }
+          if (!resumed) {
+            const snapshot = await team.snapshot()
+            snapshotSeqs.team = snapshot.seq ?? 0
+            // 快照过大（头像 data URL）时先发名册主帧，再分批补头像帧：
+            // 手机先有内容，头像随后到，且不会因为单帧几 MB 撞背压。
+            const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
+            send(plan.primary)
+            for (const batch of plan.batches) send(batch)
+            if (resume) send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: snapshot.seq ?? 0, reason: 'snapshot' })
+          }
         }
         if (cards) {
           state.unsubscribers.push(cards.subscribe(listen(cards)))
@@ -438,7 +606,12 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
           socket.close(error.status === 401 ? 4401 : error.status === 403 ? 4403 : 4400, 'Cannot subscribe to the team feed')
         }
         teardown()
-      } finally { state.busy = false }
+      } finally {
+        state.busy = false
+        const queued = state.pendingControl
+        state.pendingControl = undefined
+        if (queued !== undefined) void handleControl(queued)
+      }
     })
   })
 
@@ -490,6 +663,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
         for (const [socket, state] of sockets) { state.controller.abort(); socket.terminate() }
         for (const socket of teamSockets.keys()) { try { socket.terminate() } catch {} }
         teamWss.close()
+        releaseRetention?.()
         team?.dispose?.()
         cards?.dispose?.()
         await adapter.dispose?.()

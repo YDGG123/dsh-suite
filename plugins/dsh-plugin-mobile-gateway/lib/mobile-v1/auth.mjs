@@ -15,6 +15,11 @@ const token = () => randomBytes(32).toString('base64url')
 const matches = (value, hash) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(hash ?? '')
   && timingSafeEqual(Buffer.from(digest(value)), Buffer.from(hash))
 
+// 登录凭证有效期：/info 公布给客户端用于主动刷新——改这里即全端生效，客户端不必发版。
+// 访问令牌 15 分钟、刷新令牌 30 天；客户端按 90% 换算主动刷新间隔。
+export const ACCESS_TTL_MS = 15 * 60_000
+export const REFRESH_TTL_MS = 30 * 86400_000
+
 export async function createAuthStore(home, { now = Date.now, onRevoke = () => {}, issueGatewayDevice = null } = {}) {
   await mkdir(home, { recursive: true, mode: 0o700 })
   const path = join(home, 'bridge.json')
@@ -55,7 +60,7 @@ export async function createAuthStore(home, { now = Date.now, onRevoke = () => {
   async function issueSession(device) {
     const accessToken = token()
     const refreshToken = token()
-    Object.assign(device, { accessHash: digest(accessToken), refreshHash: digest(refreshToken), accessExpiresAt: now() + 15 * 60_000, refreshExpiresAt: now() + 30 * 86400_000, lastSeenAt: now() })
+    Object.assign(device, { accessHash: digest(accessToken), refreshHash: digest(refreshToken), accessExpiresAt: now() + ACCESS_TTL_MS, refreshExpiresAt: now() + REFRESH_TTL_MS, lastSeenAt: now() })
     await save()
     return { accessToken, refreshToken, deviceId: device.id, serverId: data.serverId, expiresAt: device.accessExpiresAt }
   }

@@ -114,6 +114,11 @@ export function createTeamFeed({
   // 历史的 2MB 出向阈值已不再相关（团队流已放宽到 8MB），红线现在的意义是
   // 「配对/首屏更快、内存更省」，不是「避免重连循环」。
   maxAvatarBytes = 44 * 1024,
+  // 回放留窗（sync-resume-v1）：断线重连补增量用。10,000 帧 / 15 分钟 / 8MB，先到者为准。
+  // 帧是已脱敏的整帧（不含分块），delta 约 200–400B，满配约 4MB。
+  historyMaxFrames = 10_000,
+  historyMaxBytes = 8 * 1024 * 1024,
+  historyMaxAgeMs = 15 * 60_000,
 } = {}) {
   const localInstanceId = `gateway-${crypto.randomUUID()}`
   const subscribers = new Set()
@@ -136,10 +141,50 @@ export function createTeamFeed({
   let lastOrder = ''
   let lastRosterKey = ''
   let disposed = false
+  // 常驻订阅：手机都断开时也让上游订阅保持（否则断线期间的事件没人记录，补增量必缺口）。
+  let retainers = 0
+  // 回放留窗：只记已脱敏的 delta（快照/avatar/order 不参与回放）。
+  let history = []
+  let historyBytes = 0
+  let historyInstanceId = null
 
   const degraded = () => service == null
 
+  function clearHistory() {
+    history = []
+    historyBytes = 0
+  }
+
+  function pruneHistory(at = now()) {
+    while (history.length > 0 && at - history[0].at > historyMaxAgeMs) {
+      historyBytes -= history[0].bytes
+      history.shift()
+    }
+    while (history.length > historyMaxFrames) {
+      historyBytes -= history[0].bytes
+      history.shift()
+    }
+    while (historyBytes > historyMaxBytes && history.length > 0) {
+      historyBytes -= history[0].bytes
+      history.shift()
+    }
+  }
+
+  // 记录一条已脱敏的 delta，供 sync.from 回放。
+  function remember(frame) {
+    if (frame?.kind !== 'delta' || !Number.isSafeInteger(frame.seq) || !Number.isSafeInteger(frame.base)) return
+    if (frame.instanceId !== historyInstanceId) {
+      historyInstanceId = frame.instanceId
+      clearHistory()
+    }
+    const bytes = JSON.stringify(frame).length
+    history.push({ ...frame, bytes })
+    historyBytes += bytes
+    pruneHistory(frame.at ?? now())
+  }
+
   function emit(frame) {
+    remember(frame)
     for (const listener of subscribers) {
       try { listener(frame) } catch (error) { log(`team-feed subscriber failed: ${error?.message ?? error}`) }
     }
@@ -393,6 +438,7 @@ export function createTeamFeed({
       lastServiceSeq = 0
       pending = new Map()
       pendingSeq = 0
+      clearHistory()
     }
     if (frame.kind === 'snapshot') {
       pending = new Map()
@@ -524,14 +570,16 @@ export function createTeamFeed({
   }
 
   function tickOnce() {
-    if (disposed || subscribers.size === 0) return
+    if (disposed || !wanted()) return
     bind()
     if (service) maybeOrder()
     else pollFallback()
   }
 
+  const wanted = () => subscribers.size > 0 || retainers > 0
+
   function start() {
-    if (disposed || tick) return
+    if (disposed || tick || !wanted()) return
     bind()
     tick = setInterval(tickOnce, service ? orderMs : pollMs)
     tick.unref?.()
@@ -565,13 +613,49 @@ export function createTeamFeed({
       if (subscribers.size === 1) start()
       return () => {
         subscribers.delete(listener)
-        if (subscribers.size === 0) stop()
+        if (!wanted()) stop()
       }
+    },
+    /** 常驻订阅：即使没有手机连着也保持上游订阅，让回放留窗不断档（sync-resume-v1）。 */
+    retain() {
+      retainers += 1
+      if (retainers === 1) start()
+      return () => {
+        retainers = Math.max(0, retainers - 1)
+        if (!wanted()) stop()
+      }
+    },
+    /**
+     * 断线补增量：afterSeq 是客户端本地水位。
+     * 返回 { mode:'ok', frames } / { mode:'gap' } / { mode:'unknown-instance', instanceId, seq }。
+     * 缺口判定**按 base 链**（400ms 合并窗口会让 seq 跳号，7→9 是常态，不能按 +1 判）。
+     */
+    history(afterSeq, maxDeltas = 200) {
+      pruneHistory()
+      if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) return { mode: 'gap' }
+      if (afterSeq > head) return { mode: 'gap' }
+      if (afterSeq === head) return { mode: 'ok', frames: [] }
+      const first = history.findIndex(frame => frame.seq > afterSeq)
+      if (first < 0) return { mode: 'gap' }
+      if (history[first].base !== afterSeq) return { mode: 'gap' }
+      const frames = []
+      let expected = afterSeq
+      for (let index = first; index < history.length; index += 1) {
+        const frame = history[index]
+        if (frame.base !== expected) break
+        frames.push(frame)
+        expected = frame.seq
+        if (frames.length > maxDeltas) return { mode: 'gap' }
+      }
+      // 帧里的 bytes 只是内部记账，别发给客户端。
+      return { mode: 'ok', frames: frames.map(({ bytes, ...frame }) => frame) }
     },
     dispose() {
       if (disposed) return
       disposed = true
       subscribers.clear()
+      retainers = 0
+      clearHistory()
       stop()
     },
   }

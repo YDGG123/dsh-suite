@@ -98,8 +98,8 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
 | POST | `/mobile/v1/read-markers` | `{conversationId, seq}` 按设备已读 |
 | GET | `/mobile/v1/team` | 团队投影**快照**帧（与 `/mobile/v1/team` WS 同源，见下节） |
 | GET | `/mobile/v1/cards` | 卡片**快照**帧（同上） |
-| WS | `/mobile/v1/events` | 首帧 `{"type":"auth",token,conversationId,after?}`，事件 reset/delta/message/status/error/ready |
-| WS | `/mobile/v1/team` | 首帧 `{"type":"auth",token}`（**不需要** conversationId）；`ready` → 团队快照 + 卡片快照 → 增量 |
+| WS | `/mobile/v1/events` | 首帧 `{"type":"auth",token,conversationId,after?,capabilities?}`，事件 reset/delta/message/status/error/ready |
+| WS | `/mobile/v1/team` | 首帧 `{"type":"auth",token,capabilities?}`（**不需要** conversationId）；`ready` → 团队快照 + 卡片快照 → 增量 |
 
 错误信封、限流、WS 关闭码与 bridge 0.0.6 一致（见设计文档 §2.1/§2.7/§2.9）。
 
@@ -128,6 +128,40 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
 | `team` / `cards` | 该流是否存在（路由已挂） |
 | `teamDegraded` / `cardsDegraded` | **源服务是否缺席**（`dsBotTeam` / `dsBotCards` 活探，**与有无订阅者无关**）→ 健康判读看这个 |
 | `teamServing` / `cardsServing` | 此刻是否真的在供实时帧（无订阅者时为 false，属正常态） |
+| `maxFrameBytes` | 单帧（或单块）上限，字节；当前 **512 KiB** |
+| `maxReassembledBytes` | 单条分块流重组后的上限，字节；当前 **4 MiB** |
+| `maxStreamsPerConnection` | 同一连接允许同时存在的分块流数；当前 **2** |
+| `heartbeatIntervalSeconds` | 客户端发应用层 ping 的间隔（秒）；当前 **25** |
+| `heartbeatTimeoutSeconds` | 超过这么久没收到任何帧（含 pong）就判死重连（秒）；当前 **75** |
+| `syncResume` | 是否支持断线补增量（`sync-resume-v1`） |
+
+### 心跳与断线补增量（`sync-resume-v1`）
+
+**心跳**：客户端按 `heartbeatIntervalSeconds` 发 `{type:'ping'}`，网关回 `{type:'pong', at}`（`at` 是网关时间戳，可顺带校时）。
+超过 `heartbeatTimeoutSeconds` 没收到任何帧 → 客户端判死、断开重连（不做原地切路径）。心跳是控制面帧：**不占 seq、不改变状态、不触发快照**。
+网关侧另有 WS 层 15s ping/pong 清理僵死连接，两者互补（一个发现 TCP 半开，一个清服务端僵尸）。
+
+**补增量**：团队流常驻订阅 + 环形留窗，**10,000 帧 / 15 分钟 / 8MB，先到者为准**（无手机连着时也保持上游订阅，
+否则断线期间的事件没人记录，补增量必缺口）。留窗只记已脱敏的 `delta`；快照、`avatar` 旁路帧、`order` 帧不参与回放。
+
+两种请求方式：
+
+1. **零往返（推荐）**：auth 首帧带 `resume`——
+   `{type:'auth', token, resume:{instanceId:'…', afterSeq:8271, maxDeltas?:200}}`。
+   命中留窗 → 直接回 delta 序列（不整帧快照）；命中不了 → 回错误帧 + 新快照（同一连接自愈）。
+2. **连接中重试**：`{type:'sync.from', instanceId, afterSeq, maxDeltas?}`，语义同上；5s 内重复请求回 `SYNC_RATE_LIMITED`。
+
+回放结束必发 `{type:'sync.done', instanceId, seq, reason}`（`reason`：`resume`/`sync.from`/`caught-up`/`gap`/`unknown-instance`/`snapshot`）。
+错误码：`SYNC_GAP`（窗口够不到）、`SYNC_UNKNOWN_INSTANCE`（instanceId 变了）、`SYNC_RATE_LIMITED`、`SYNC_BAD_REQUEST`、`SYNC_UNAVAILABLE`。
+
+**缺口按 base 链判，不按整数 seq 连续**：网关 400ms 合并窗口会把多条 delta 压成一帧（`7 → 9` 跳号是常态）。
+规则：回放首帧 `base === afterSeq`，其后每帧 `base === 上一帧.seq`；任何一环不成立 = 缺口 → 回快照。**禁止**用「seq 是否 +1」判缺口。
+
+**seq 的持久化边界**：`seq`/`instanceId` 属于 ds-bot（生产者），网关不拥有、不重置。
+- 网关重启：instanceId 不变；留窗在内存里随之清空 → 只能回快照（客户端不会看到假缺口，因为 `afterSeq < head` 且窗口为空）。
+- ds-bot 重启：`instanceId` 变 → `SYNC_UNKNOWN_INSTANCE` → 快照。
+- 卡片流不参与补增量：重连照旧重取 `card-snapshot`（帧小，不值得单开回放通道）。
+
 
 > ⚠️ 真机踩过的坑：早先 `teamDegraded` 直接取「当前是否绑定服务」，最后一条订阅断开后网关会解绑，
 > 于是 `/info` 又显示 `teamDegraded:true`，巡检时被误判成「服务掉了」。现在语义拆开：
@@ -171,6 +205,31 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
           { "op": "card.cleared", "id": "q1" }] }
 ```
 
+### 大响应分块（`chunked-frames-v1`）
+
+单帧过大（快照/头像/大增量）会撞客户端内存或连接缓冲阈值，被踢下线后重连、再踢。
+抬阈值治标不治本：**把一条大帧的序列化 JSON 切块发，客户端按序号拼回原文再走原处理链**。
+
+- **协商**：客户端在 WS 首帧（`auth`）里带 `capabilities: ["chunked-frames-v1"]`（也接受
+  `features` / `caps`，数组、只认字符串项）。**没声明的老客户端永远收整帧**，协议版本不变。
+- **上限**：见 `/info` 的 `maxFrameBytes` / `maxReassembledBytes` / `maxStreamsPerConnection`。
+
+```json
+{ "kind": "chunk", "streamId": "9f0c…", "index": 0, "total": 3,
+  "finalKind": "snapshot", "part": "{\"v\":1,\"kind\":\"snapshot\",…", "at": 1761264000000 }
+```
+
+- `part` 是被切开**原始 JSON 字符串**片段，**按 UTF-8 字符边界**切（中文/emoji 不会被劈成两半；
+  按字节硬切拼回来是乱码，`JSON.parse` 必挂）。客户端 `parts.join("")` 后得到原帧全文。
+- `finalKind` 是原帧的 `kind`（`snapshot`/`delta`/`card-snapshot`/`card`/`order`…）；
+  `index` 从 0 连续到 `total-1`；`streamId` 每条流唯一。
+- **顺序**：网关**串行**发送流（一条流的块发完才发下一条），同一连接实际并发恒为 1 ≤ 公布上限；
+  帧与帧的先后不会被分块打乱。客户端仍应按 `streamId` 归位、容忍乱序与重复（幂等）。
+- **超重组上限**（> 4 MiB）：**不切、不发**，只记一行日志（`… not sent (too-large …)`）。
+  宁可让客户端保持上一份状态，也不发一条必然被拒的流；连接不受影响，后续帧照常。
+- **兜底不变**：> 1 MB 的团队快照仍先走 `avatarDeferred` 分帧（主帧 + 头像旁路帧）；
+  分块是在**单帧出口**上的通用兜底，两者互补、不冲突。
+
 ### 网关这一层做了什么（以及刻意不做什么）
 
 1. **合并节流 400 ms**：`bot.patch` / `room.patch` 在窗口内按实体合并（绝对值语义，last-write-wins），
@@ -196,7 +255,7 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
 | 透传 | 原样透传，**不做转码/截断**（实测 300KB 单头像逐字节一致） |
 | 上限 | 单个 `avatar.image` > **32KB**（产品红线）时只裁掉 `image`、保留 `shape`/`color`，并记一行日志（20 个 Bot 满配约 0.84MB，远离出向缓冲阈值） |
 | patch 帧 | 静态字段一律裁掉（`avatar`/`color`/…），不进每秒变化的高频路径 |
-| 团队流背压 | 团队 WS 的缓冲上限单独放宽到 **8MB**（快照是一次性大帧；按会话的 `/events` 仍是 2MB） |
+| 团队流背压 | 团队 WS 的缓冲上限单独放宽到 **8MB**（快照是一次性大帧；按会话的 `/events` 仍是 2MB）；声明分块能力的客户端由 chunk 流兜底，不再靠单帧硬扛 |
 | 大快照分帧 | 快照 > **1MB** 时先发**去掉 image 的主帧**（带 `avatarDeferred: true`），再按 ≤256KB 分批发 `{kind:"avatar"}` 旁路帧补头像；小快照不分帧 |
 
 **发布端注意（重要）**：

@@ -33,8 +33,8 @@
 
 ```
 app/                          # 未签名 IPA（TrollStore 直接装）
-  DshMobile-iOS16-20261025-2147.ipa   (13,594,811 B)
-  sha256: 25235b9777e0709d61cc19d3c29997f05e4f8888d6a22ebe73023c3ee7bbf355
+  DshMobile-iOS16-20261026-0045.ipa   (13,597,064 B)
+  sha256: 15db9884a1d400da5bd872a3361ca3564f8d9a213eeffe44f2e35d1297e4ec6d
 plugins/
   dsh-plugin-mobile-gateway/  # 网关插件（含产物，装完即用；无需 npm/构建）
   ds-bot/                     # ds-bot fork（含 client.js 产物）

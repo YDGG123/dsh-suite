@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-25T20:36:38.532Z",
+  "generatedAt": "2026-10-25T22:29:57.137Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "805886c4fe63890b2b3f163acbece6af8c3d77114dc669afa4f757e39e556753",
@@ -14,7 +14,7 @@
     "docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md": "c81f3f2c67678cce87373a220f9e3745a8aaf1cc2ef42894abb143d7cbefd176",
     "docs/dsh-rc2-mobile-integration.md": "d6d0945a512316833ff927a5568259b6bf165711e6705a9476d8d0de53e241af",
     "docs/file-cards-mobile-integration.md": "715d74b9d933afa65cd1ac663bad939334f55be2a6b6406a02fad82c6ae6dbd2",
-    "docs/mobile-v1-integration.md": "a354389579f8222b4bc8f9ed27ab4d78dd4a3ebaeff5ede325d5c6b9e98e5b46",
+    "docs/mobile-v1-integration.md": "d3e4bc57539e2fa6275ae8f5e012ae8679f0f945f9731d9fc7e64182208d683d",
     "docs/multi-gateway-app-integration.md": "e4a269fedca2ce96098a7ed7a4cab878099c9a81085cdeef97e7ff7e245b0bae",
     "docs/multi-gateway-phase1-acceptance.md": "d5e34e571ccdad4e0f3f6c81909e5f29b745107d40f55446017f456f4adcdd58",
     "docs/multi-gateway-todo.md": "8fdabe04b522743c102210263b33e48266165a2c1587f748bd3fbf122f9c623c",
@@ -222,7 +222,7 @@
     }
   },
   "ipa": {
-    "name": "DshMobile-iOS16-20261026-0430.ipa",
-    "sha256": "a667559d590e971358094ab212ed874e17bce638cfbbfa89eaa7ba21f2b0a560"
+    "name": "DshMobile-iOS16-20261026-0620.ipa",
+    "sha256": "62bb151186caefc64ac380efdd9d5bb13174fcdd84195efa292e2cdf6805eec6"
   }
 }

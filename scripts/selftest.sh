@@ -292,6 +292,20 @@ done
 assert_text "R21 install.sh 打印 backup 锚点" "$REPO_ROOT/scripts/install.sh" 'say "backup: '
 assert_text "R21 install.ps1 打印 RESULT 锚点" "$REPO_ROOT/scripts/install.ps1" "'RESULT: PASS'"
 
+# R22：IPA 命名白名单必须同时放行 DshMobile 与 Orcarness 两种前缀（历史包/改名后现名），
+#      其它名字仍要警告。只改成 Orcarness 会让回滚用的旧包刷警告，算回归。
+FAKE22="$SANDBOX/repo22"
+fake_repo "$FAKE22"
+head -c 3000 /dev/urandom > "$SANDBOX/Orcarness-iOS16-20261027-777777.ipa"
+head -c 3000 /dev/urandom > "$SANDBOX/DshMobile-iOS16-20261027-777777.ipa"
+head -c 3000 /dev/urandom > "$SANDBOX/Bad-Name-777777.ipa"
+expect_code "R22 Orcarness 前缀放行" 0 bash "$FAKE22/scripts/sync-from-dev.sh" --ipa "$SANDBOX/Orcarness-iOS16-20261027-777777.ipa"
+assert_no_text "R22 Orcarness 前缀无警告" "$SANDBOX/out.log" "警告：IPA 名字不符合"
+expect_code "R22 DshMobile 前缀放行" 0 bash "$FAKE22/scripts/sync-from-dev.sh" --ipa "$SANDBOX/DshMobile-iOS16-20261027-777777.ipa"
+assert_no_text "R22 DshMobile 前缀无警告" "$SANDBOX/out.log" "警告：IPA 名字不符合"
+expect_code "R22 其它名字仍能同步" 0 bash "$FAKE22/scripts/sync-from-dev.sh" --ipa "$SANDBOX/Bad-Name-777777.ipa"
+assert_text "R22 其它名字必须警告" "$SANDBOX/out.log" "警告：IPA 名字不符合"
+
 printf '\n== 结果：通过 %d 条，失败 %d 条 ==\n' "$pass" "$failn"
 [ "$failn" -eq 0 ] || exit 1
 printf '（说明：R1–R6、R11 必须“红”，R7–R21 撤错/删多/误删用户配置/非幂等就会“红”；全绿反而说明闸门什么都没检查。）\n'

@@ -118,9 +118,11 @@ sync_ipa() {
     *.ipa) : ;;
     *) die "不是 .ipa 文件：$base" ;;
   esac
+  # 兼容两种前缀：DshMobile 是历史/回滚包名，Orcarness 是 v1.7.10(35) 改名后的现名。
+  # 过渡期两种都会出现，两个都放行；其它名字仍警告（不拦，仅提示）。
   case "$base" in
-    DshMobile-iOS16-*) : ;;
-    *) say "  ! 警告：IPA 名字不符合 DshMobile-iOS16-* 约定：$base" ;;
+    DshMobile-iOS16-*|Orcarness-iOS16-*) : ;;
+    *) say "  ! 警告：IPA 名字不符合 DshMobile-iOS16-* / Orcarness-iOS16-* 约定：$base" ;;
   esac
   mkdir -p app
   tmp="app/.tmp-$base.$$"

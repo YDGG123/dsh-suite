@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-25T22:29:57.137Z",
+  "generatedAt": "2026-10-26T02:02:53.926Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "805886c4fe63890b2b3f163acbece6af8c3d77114dc669afa4f757e39e556753",
@@ -222,7 +222,7 @@
     }
   },
   "ipa": {
-    "name": "DshMobile-iOS16-20261026-0620.ipa",
-    "sha256": "62bb151186caefc64ac380efdd9d5bb13174fcdd84195efa292e2cdf6805eec6"
+    "name": "DshMobile-iOS16-20261026-0954.ipa",
+    "sha256": "52578538b1167561b7ec2c53597c2cb6dde444692b9e059e0c91d0ae8342e996"
   }
 }

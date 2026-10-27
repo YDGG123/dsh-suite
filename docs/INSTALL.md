@@ -219,7 +219,7 @@ bash scripts/install.sh --verify-only
 Get-FileHash app\Orcarness-iOS16-20261027-2344.ipa -Algorithm SHA256
 ```
 
-- **预期**：`058DB7E0AB80DA02BB48E5A053C367DCD56D70504987DA30E5C10CFC2CCAD681`，大小 `10,482,034` 字节
+- **预期**：`44B8C58D1DB4BB906D4B092D9B8E4D2E9D9BF7E20F5AD7BB73636D3F80A67447`，大小 `10,481,902` 字节
 - **对不上** → 重新下载本仓库，别用这个文件
 
 ### 3.2 把 IPA 传到手机
@@ -399,8 +399,8 @@ iOS 只在启动时读语言设置：按 App 内提示**退出再打开**（设�
 
 ```
 app/
-  Orcarness-iOS16-20261027-2344.ipa   10,482,034 B
-  sha256 058db7e0ab80da02bb48e5a053c367dcd56d70504987da30e5c10cfc2ccad681
+  Orcarness-iOS16-20261027-2344.ipa   10,481,902 B
+  sha256 44b8c58d1db4bb906d4b092d9b8e4d2e9d9bf7e20f5ad7bb73636d3f80a67447
 plugins/
   dsh-plugin-mobile-gateway/   0.10.4   （含 lib/ 产物，装完即用）
   ds-bot/                      0.2.0    （含 client.js 产物）

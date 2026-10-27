@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-27T08:32:21.309Z",
+  "generatedAt": "2026-10-27T09:42:28.490Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "805886c4fe63890b2b3f163acbece6af8c3d77114dc669afa4f757e39e556753",
@@ -15,6 +15,7 @@
     "docs/dsh-0.2.0-rc.2-plugin-management-mobile-integration.md": "c81f3f2c67678cce87373a220f9e3745a8aaf1cc2ef42894abb143d7cbefd176",
     "docs/dsh-rc2-mobile-integration.md": "d6d0945a512316833ff927a5568259b6bf165711e6705a9476d8d0de53e241af",
     "docs/file-cards-mobile-integration.md": "715d74b9d933afa65cd1ac663bad939334f55be2a6b6406a02fad82c6ae6dbd2",
+    "docs/history-segments.md": "389c74cceac3c2650109fc2df4e791a464cbe5064b35b0c324fba922f46db914",
     "docs/mobile-v1-integration.md": "0c7695f22e7ae7f6575ae373729e46a647fd152da2c3bf8f54c4f1c26c39a1ec",
     "docs/multi-gateway-app-integration.md": "e4a269fedca2ce96098a7ed7a4cab878099c9a81085cdeef97e7ff7e245b0bae",
     "docs/multi-gateway-phase1-acceptance.md": "d5e34e571ccdad4e0f3f6c81909e5f29b745107d40f55446017f456f4adcdd58",
@@ -38,7 +39,8 @@
     "lib/gateway-probe.mjs": "2cf18a1a78ea3615409269ec903e7663aa1bc8a006192cd0388017d76d55e243",
     "lib/gateway-state.mjs": "971fbc1052ee49a1585db7124c20f16b36dddfe4c49759e4a6c48ca13b553c75",
     "lib/gateway-tools.mjs": "782adadf14bd6e6f1822d81bdec45ea36ff47bc1627de2cbe4c3e04f0b38215e",
-    "lib/index.mjs": "7c1837dbfa940c311c89108380743c184ed5ba03038eff0060c4b1802df25385",
+    "lib/history-segments.mjs": "9a539728fcfb62e17840416d16f44de8762747d9f113eead75d1d4fb2c6ada4a",
+    "lib/index.mjs": "3dcab30db0391eef4b19e090d206a31ed03595e62afe174c730a36777c947972",
     "lib/mobile-v1/actions.mjs": "e2dd001ae28016149e656fcf14279f876d02365658ee293b3fb44c7227565f5e",
     "lib/mobile-v1/adapter.mjs": "0b0ab2b4bf23a04d899946106626ede77459b9efa53051f22cd3ffeea09168dc",
     "lib/mobile-v1/admin.mjs": "ebee2338a6db5866bc4c609d7ba5fd077adf0828675417f3266a958f87e1ada3",
@@ -223,7 +225,7 @@
     }
   },
   "ipa": {
-    "name": "Orcarness-iOS16-20261027-1631.ipa",
-    "sha256": "cb620f043ecfff730a46deb6ba09b7c2065299e8eda43226e609787f03ba7b69"
+    "name": "Orcarness-iOS16-20261027-1740.ipa",
+    "sha256": "3ef08ab8086976903c3a96e9ea3e554b033fe1bd73f63ac02e31af08dc33a3c5"
   }
 }

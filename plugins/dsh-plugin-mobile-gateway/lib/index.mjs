@@ -1,4 +1,5 @@
 import { stringifyWireFrame } from './wire-json.mjs'
+import { createHistoryOwner } from './history-segments.mjs'
 import { assistantFinish, failureDetails, toolResultDetails, turnReasonDetails } from './session-event-details.mjs'
 // dsh-plugin-mobile-gateway — persistent Host plugin.
 //
@@ -1243,13 +1244,18 @@ function historyPage(value, msg) {
   const maxBytes = Number.isSafeInteger(msg.maxBytes) && msg.maxBytes > 0 ? msg.maxBytes : HISTORY_DEFAULT_MAX_BYTES
   const trim = msg.view === 'conversation'
   const capped = capHistoryEvents(rawEvents, maxBytes, trim)
-  const hasMore = value.hasMore === true || capped.dropped > 0
   // An all-hidden page still needs a cursor so callers can reach older text.
   const oldest = capped.events[0]?.seq ?? rawEvents[0]?.seq
+  // hasMore without a cursor is a trap: the mobile history reducer fails the whole
+  // page with MISSING_NEXT_CURSOR when hasMore is true and nextBeforeSeq is absent
+  // (dsh-mobile shared/.../sync/HistoryReducer.kt:158), which shows up as "paging is
+  // stuck" rather than an error anyone can read. No cursor means nothing older is
+  // reachable, so report the end of the pageable range instead of promising more.
+  const hasMore = (value.hasMore === true || capped.dropped > 0) && oldest !== undefined
   return { ...value, kind: 'history', sessionId: msg.sessionId,
     events: capped.events, bytes: capped.bytes, hasMore,
     ...(trim ? { view: 'conversation' } : {}),
-    ...(hasMore && oldest !== undefined ? { nextBeforeSeq: oldest } : {}),
+    ...(hasMore ? { nextBeforeSeq: oldest } : {}),
   }
 }
 
@@ -1488,12 +1494,28 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
     }
     const cursorError = validateHistoryCursor(msg, sessionId, 'beforeSeq')
     if (cursorError) return cursorError
+    // 归属解析（这条通道以前完全没有）：解析失败/被拒时**不查宿主**，避免先读后拒。
+    let owner = null
+    if (typeof pluginContext?.historyOwner === 'function') {
+      try { owner = await pluginContext.historyOwner(sessionId) } catch (error) {
+        return { kind: 'error', code: error?.code ?? 'internal', requestType: 'history', sessionId,
+          message: error?.message ?? String(error) }
+      }
+    }
     const payload = { sessionId }
     if (typeof msg.beforeSeq === 'number' && Number.isFinite(msg.beforeSeq)) payload.beforeSeq = msg.beforeSeq
     if (typeof msg.maxMessages === 'number' && Number.isFinite(msg.maxMessages)) payload.maxMessages = msg.maxMessages
     const frame = await proxyQuery(api, 'history', api.sessions.history.bind(api.sessions), payload)
-    if (frame.kind === 'history') return historyPage(frame, { ...msg, sessionId })
-    return frame
+    if (frame.kind !== 'history') return frame
+    const page = historyPage(frame, { ...msg, sessionId })
+    // 两层语义要分得清：
+    //   hasMore: 本段还有更早内容 → 客户端继续用 nextBeforeSeq 翻本段；
+    //   previousSessionId: 本段到头的**上一段**标识 → 客户端换 sessionId 再发一次 history
+    //                       （beforeSeq 不传，宿主会从该段最新一页开始）。
+    // 只有 hasMore 不为真时给入口：否则客户端会在两段之间来回跳。拿不出游标时
+    // historyPage 已把 hasMore 降级为 false，那种情况也属于「本段到头」，同样给入口。
+    if (owner?.previous === undefined || page.hasMore === true) return page
+    return { ...page, previousSessionId: owner.previous }
   }
   if (msg.type === 'attachment') {
     const sessionId = requireSessionId(msg)
@@ -2263,6 +2285,10 @@ const plugin = {
     const api = createDshHostAdapter(ctx.typertGateway, peer)
     const host = api
     const agentDefaultModel = ctx.agentDefaultModel
+    // WS 历史通道的归属解析（bot 分段）：名册取 ds-bot 的 dsBotTeam，与手机看到的是同一份。
+    // 服务缺席（旧 ds-bot / 降级态）就不解析——宁可没有「更早一段」入口，也不猜。
+    const historyOwner = createHistoryOwner(
+      () => optionalService(ctx, 'dsBotTeam')?.snapshot?.() ?? null)
     const options = {
       path: DEFAULT_WS_PATH,
       mobileV1Enabled: false,
@@ -3212,6 +3238,8 @@ const plugin = {
               handleQuery(api, host, agentDefaultModel, msg, {
                 onInstallStart: (requestId) => pluginInstallOwners.set(requestId, ws),
                 onInstallEnd: (requestId) => pluginInstallOwners.delete(requestId),
+                // WS 历史通道的 bot 分段归属解析（见 apply 顶部的 historyOwner）。
+                historyOwner,
               }).then((frame) => {
                 if (frame && ws.readyState === 1) ws.send(stringifyWireFrame(frame))
               })

@@ -230,7 +230,7 @@ export function createTeamFeed({
     if (signature === lastOrder) return
     lastOrder = signature
     const frame = { v: TEAM_FEED_VERSION, kind: 'order', instanceId, seq: head, orderSeq: ++orderSeq, at: now(), sessions: keys.sessions,
-      ...(degraded() ? { degraded: true } : {}) }
+      degraded: degraded() === true }
     emit(frame)
   }
 
@@ -309,6 +309,10 @@ export function createTeamFeed({
       instanceId: typeof raw?.instanceId === 'string' && raw.instanceId ? raw.instanceId : instanceId,
       seq: Number.isSafeInteger(raw?.seq) ? raw.seq : head,
       at: Number.isSafeInteger(raw?.at) ? raw.at : now(),
+      // 不变式：团队流每帧都带 `degraded`（true=降级供数，false=实时）。
+      // 以前正常帧省略字段，手机端「带字段才改、缺字段不动」的语义会让
+      // 缓存水合置上的降级标志永远清不掉（真机：经常显示实时状态不可用）。
+      degraded: degraded() === true,
       // 契约 §4：mainBotId ≡ mainBotIds[0] ?? null，两处同源。
       mainBotId: mainBotIds[0] ?? null,
       mainBotIds,
@@ -399,7 +403,7 @@ export function createTeamFeed({
     if (seq <= head) return // 防御：seq 不前进就不发，免得订阅端 base 判断失效
     const base = head
     head = seq
-    emit({ v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base, at: now(), ops })
+    emit({ v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base, at: now(), ops, degraded: degraded() === true })
   }
 
   function scheduleFlush() {
@@ -504,7 +508,7 @@ export function createTeamFeed({
     }
     const base = head
     head = seq
-    emit(await redactFrame({ v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base: Number.isSafeInteger(frame.base) ? frame.base : base, at: Number.isSafeInteger(frame.at) ? frame.at : now(), ops }, redact))
+    emit(await redactFrame({ v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base: Number.isSafeInteger(frame.base) ? frame.base : base, at: Number.isSafeInteger(frame.at) ? frame.at : now(), ops, degraded: degraded() === true }, redact))
     return
   }
 
@@ -531,7 +535,7 @@ export function createTeamFeed({
         for (const key of previous.keys()) if (!present.has(key)) { const [kind, id] = key.split(':'); ops.push({ op: `${kind}.remove`, id }) }
         if (ops.length) {
           const seq = ++fallbackSeq
-          const frame = { v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base: head, at: now(), ops, degraded: true }
+          const frame = { v: TEAM_FEED_VERSION, kind: 'delta', instanceId, seq, base: head, at: now(), ops, degraded: degraded() === true }
           head = seq
           emit(frame)
         }
@@ -547,6 +551,11 @@ export function createTeamFeed({
     if (disposed) return
     const next = (() => { try { return resolveService() } catch { return null } })()
     if (next && next !== service && typeof next.subscribe === 'function') {
+      // 降级 → 实时的转换：手机端「带字段才改、缺字段不动」的降级标志（缓存水合置上的）
+      // 只能靠一帧显式 degraded:false 清掉。但 ds-bot 的 subscribe 不发快照，名册/排序
+      // 都没变时也不会有 delta/order —— 恢复瞬间必须主动补一帧快照，否则手机会一直
+      // 显示「实时状态不可用」直到下次变化（真机踩过：经常显示实时状态不可用）。
+      const recovering = service == null
       try { detach?.() } catch {}
       service = next
       instanceId = typeof next.instanceId === 'string' && next.instanceId ? next.instanceId : localInstanceId
@@ -557,6 +566,12 @@ export function createTeamFeed({
       } catch (error) {
         log(`team-feed subscribe failed: ${error?.message ?? error}`)
         detach = null
+      }
+      if (recovering && subscribers.size > 0) {
+        void (async () => {
+          try { emit(await redactFrame(normalizeSnapshot(next.snapshot()), redact)) }
+          catch (error) { log(`team-feed recovery snapshot failed: ${error?.message ?? error}`) }
+        })()
       }
       log(`team-feed: subscribed dsBotTeam (instanceId=${instanceId}, seq=${head})`)
       return

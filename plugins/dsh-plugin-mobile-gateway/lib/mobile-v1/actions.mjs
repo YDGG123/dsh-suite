@@ -3,6 +3,9 @@ const fields = Object.freeze({
   'set-flags': ['id', 'pinned', 'hidden'], usage: ['timeZone'],
   'memory-view': ['botId'], 'memory-forget': ['botId', 'scope', 'topic', 'text'],
   schedules: [], 'schedule-create': ['target', 'title', 'prompt', 'when'], 'schedule-delete': ['sessionId', 'id'],
+  // 动作名与 ds-bot 的 dispatch key 一致（channel.js:437 `case 'answer-question'`），
+  // 写错一个词就是 bot/not-found。answer 里 selected 是选项 label 原文。
+  'answer-question': ['sessionId', 'questionId', 'answer'],
   // queue / queue-remove：原版 ds-bot 与补丁版都未实现，按裁决不宣告（App 无 queue UI）。
 })
 export const MOBILE_ACTIONS = Object.freeze(Object.keys(fields))
@@ -36,6 +39,9 @@ export function createTeamActions({ callTeam, snapshot, sessionController = {}, 
   if (typeof callTeam !== 'function' || typeof snapshot !== 'function') throw new TypeError('callTeam and snapshot are required')
   const textViews = typeof redactTexts === 'function'
   const actions = MOBILE_ACTIONS.filter(name => !(name.startsWith('memory-') || ['models', 'efforts', 'usage', 'schedules', 'schedule-create', 'schedule-delete'].includes(name)) || textViews)
+  // 同一个问题只放一条在途请求：防连点重复投递。**正确性靠服务端认领**
+  // （channel.js 先 delete 再问，失败回滚），这里只是省一次无意义的往返。
+  const answering = new Set()
   async function view(signal) {
     const value = await snapshot(signal)
     signal.throwIfAborted()
@@ -145,6 +151,32 @@ export function createTeamActions({ callTeam, snapshot, sessionController = {}, 
         const result = await callTeam(name, body, signal), indexes = new Map(), owners = []
         for (const [index, owner] of (result.owners ?? []).entries()) if (v.conversations.some(item => item.id === owner.id && item.kind === owner.kind)) { indexes.set(index, owners.length); owners.push(pick(owner, ['key', 'id', 'kind', 'name'])) }
         return safe({ owners, models: (result.models ?? []).map(model => pick(model, ['key', 'provider', 'model', 'name', 'providerName'])), kinds: (result.kinds ?? []).filter(kind => typeof kind === 'string'), rows: (result.rows ?? []).filter(row => Array.isArray(row) && row.length === 9 && indexes.has(row[1]) && row.slice(4).every(n => Number.isFinite(n) && n >= 0)).slice(0, 10000).map(row => [row[0], indexes.get(row[1]), ...row.slice(2)]), now: result.now, scanning: result.scanning === true }, v, signal)
+      }
+      if (name === 'answer-question') {
+        if (!string(body.sessionId) || !string(body.questionId)) invalid()
+        object(body.answer, ['selected', 'custom'])
+        // selected 是选项 label **原文**：只做形状与长度校验，绝不 trim/去重/归一化——
+        // 服务端拿 label 当答案身份（parts.js:69-87），差一个字符就对不上。
+        if (body.answer.selected !== undefined && (!Array.isArray(body.answer.selected)
+          || body.answer.selected.length > 50
+          || body.answer.selected.some(label => typeof label !== 'string' || label.length === 0 || label.length > 2000))) invalid()
+        if (body.answer.custom !== undefined && (typeof body.answer.custom !== 'string' || body.answer.custom.length > 8000)) invalid()
+        // 归属：只答「可见团队里这个 Session 正在等的那张卡」。
+        // bot 卡：sessionId ∈ [该 bot 的 sessionId, ...parts]；群卡：sessionId === room.id
+        // （ds-bot 侧先走 roomCardFor，再走 state.questions —— channel.js:441/447）。
+        if (!v.conversations.some(row => ownedSession(row, body.sessionId))) {
+          fail(404, 'TARGET_DENIED', 'This Session is not on the visible team.')
+        }
+        const key = `${body.sessionId}\u0000${body.questionId}`
+        if (answering.has(key)) fail(409, 'QUESTION_IN_FLIGHT', 'This question is already being answered.')
+        answering.add(key)
+        try {
+          await callTeam('answer-question', { sessionId: body.sessionId, questionId: body.questionId, answer: body.answer }, signal)
+        } finally {
+          answering.delete(key)
+        }
+        // 返回对象（不返回 true）：server 侧会展开成 {...value}，标量会被吞掉。
+        return { sessionId: body.sessionId, questionId: body.questionId, answered: true }
       }
       const item = target(v, body.conversationId)
       if (name === 'queue') return queue(item, v, signal)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-28T10:12:31.064Z",
+  "generatedAt": "2026-10-28T17:39:20.534Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "805886c4fe63890b2b3f163acbece6af8c3d77114dc669afa4f757e39e556753",
@@ -40,12 +40,12 @@
     "lib/gateway-state.mjs": "971fbc1052ee49a1585db7124c20f16b36dddfe4c49759e4a6c48ca13b553c75",
     "lib/gateway-tools.mjs": "782adadf14bd6e6f1822d81bdec45ea36ff47bc1627de2cbe4c3e04f0b38215e",
     "lib/history-segments.mjs": "9a539728fcfb62e17840416d16f44de8762747d9f113eead75d1d4fb2c6ada4a",
-    "lib/index.mjs": "3dcab30db0391eef4b19e090d206a31ed03595e62afe174c730a36777c947972",
+    "lib/index.mjs": "7030394235997a471f620334c2e16d0bc313fc85a7e1741bf624f5a24d79e7cb",
     "lib/mobile-v1/actions.mjs": "e2dd001ae28016149e656fcf14279f876d02365658ee293b3fb44c7227565f5e",
     "lib/mobile-v1/adapter.mjs": "0b0ab2b4bf23a04d899946106626ede77459b9efa53051f22cd3ffeea09168dc",
     "lib/mobile-v1/admin.mjs": "ebee2338a6db5866bc4c609d7ba5fd077adf0828675417f3266a958f87e1ada3",
     "lib/mobile-v1/auth.mjs": "59079df068ee813e89d4fee67bf75b33c3d16bb5448bb8060541a63495bc8226",
-    "lib/mobile-v1/card-frames.mjs": "b1f3e5956fde69315bf7caa7a7111223dc92f86a7401b5dde14ace05a34a9cbf",
+    "lib/mobile-v1/card-frames.mjs": "28779c4d9e7ff4dc9ae5f33189ecaf49d7cd0c713d3c9aa1c966ce3b302b4388",
     "lib/mobile-v1/chunked.mjs": "8c162b9748d04a2c4182919310bea36ab0e644d6dba3016e090e9df7e8c000e3",
     "lib/mobile-v1/config.mjs": "233faa587541fef76fa5f05d3ab42e56b9ab84681fb3e85535edffd9e2c39c75",
     "lib/mobile-v1/group-projection.mjs": "f41d9d72244e3239eedc3b152ea5237acddd806f74956191055a12423884d86a",
@@ -225,7 +225,7 @@
     }
   },
   "ipa": {
-    "name": "Orcarness-iOS16-20261028-1810.ipa",
-    "sha256": "e51bf1824012b20e8e365415a1e207ee4101c66590863c25a1c9233edfa419fc"
+    "name": "Orcarness-iOS16-20261029-0145.ipa",
+    "sha256": "6f9014da5847a8ae79c9f74fb443e6a5386435d3a0445db8fea8fc85084f6c3b"
   }
 }

@@ -3469,6 +3469,10 @@ const plugin = {
 
     const disposeQuestions = ctx.on('user-questions/request', (request, next) => {
       const sessionId = request?.agent?.id === undefined ? null : String(request.agent.id)
+      // 2026-10-28 探查结论：这条事件通道在本机**从未触发**（诊断行一次都没打印，
+      // 而手机确实收到了卡片）。手机端的提问卡实际走 `dsBotCards` 卡片帧，不走这里。
+      // 保留本段以兼容将来走事件通道的组合，但**不要**再拿它排查「卡片收不到」——
+      // 那种情况查 card-frames.mjs 的订阅与 ds-bot 的卡片源。
       if (!sessionId || !Array.isArray(request.questions) || !hasInteractionClient(sessionId)) return next()
       const rpcId = crypto.randomUUID()
       return new Promise((resolve, reject) => {

@@ -152,8 +152,16 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
    命中留窗 → 直接回 delta 序列（不整帧快照）；命中不了 → 回错误帧 + 新快照（同一连接自愈）。
 2. **连接中重试**：`{type:'sync.from', instanceId, afterSeq, maxDeltas?}`，语义同上；5s 内重复请求回 `SYNC_RATE_LIMITED`。
 
-回放结束必发 `{type:'sync.done', instanceId, seq, reason}`（`reason`：`resume`/`sync.from`/`caught-up`/`gap`/`unknown-instance`/`snapshot`）。
+回放结束必发 `{type:'sync.done', instanceId, seq, degraded:{team,cards}, reason}`（`reason`：`resume`/`sync.from`/`caught-up`/`gap`/`unknown-instance`/`snapshot`）。
 错误码：`SYNC_GAP`（窗口够不到）、`SYNC_UNKNOWN_INSTANCE`（instanceId 变了）、`SYNC_RATE_LIMITED`、`SYNC_BAD_REQUEST`、`SYNC_UNAVAILABLE`。
+
+**`sync.done` 的 `degraded`（2026-10-31 加）**：形状与 `ready` 帧一致（`{ team, cards }`，`true` = 降级供数）。
+它是**回放界标**——到达时回放的数据已全部应用，此刻的 `degraded` 就是最终态，客户端应当采用它。
+为什么需要：客户端在缓存水合时会置 `degraded = true`（诚实），但**静止期没有任何 delta/order 能把它清掉**
+（`maybeOrder` 在排序签名不变时不发帧），于是用户一直看到「实时状态不可用」，直到下一次数据变化——
+真机表现就是「经常不可用、过会儿自己好」。`caught-up` 路径甚至零业务帧，这个问题尤其明显。
+**注意**：`caught-up`（`afterSeq === head`）时网关会**补发一帧快照**（防客户端本地无数据），
+但 `sync.done` 的 `reason` 仍是 `caught-up`（语义不变）。
 
 **缺口按 base 链判，不按整数 seq 连续**：网关 400ms 合并窗口会把多条 delta 压成一帧（`7 → 9` 跳号是常态）。
 规则：回放首帧 `base === afterSeq`，其后每帧 `base === 上一帧.seq`；任何一环不成立 = 缺口 → 回快照。**禁止**用「seq 是否 +1」判缺口。

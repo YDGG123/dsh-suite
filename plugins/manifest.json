@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T10:25:03.391Z",
+  "generatedAt": "2026-10-31T10:44:39.793Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -19,7 +19,7 @@
     "docs/file-cards-mobile-integration.md": "715d74b9d933afa65cd1ac663bad939334f55be2a6b6406a02fad82c6ae6dbd2",
     "docs/file-upload-app-integration.md": "b170b2f00b90cc1a7f6d6bdb43beb8aa544fa3045d0f96ad85890b0f31d462d1",
     "docs/history-segments.md": "389c74cceac3c2650109fc2df4e791a464cbe5064b35b0c324fba922f46db914",
-    "docs/mobile-v1-integration.md": "0c7695f22e7ae7f6575ae373729e46a647fd152da2c3bf8f54c4f1c26c39a1ec",
+    "docs/mobile-v1-integration.md": "002cc9cc1160294dcd5f2930670e76783c98fb7d0369c64c91fa6850a4299632",
     "docs/multi-gateway-app-integration.md": "e4a269fedca2ce96098a7ed7a4cab878099c9a81085cdeef97e7ff7e245b0bae",
     "docs/multi-gateway-phase1-acceptance.md": "d5e34e571ccdad4e0f3f6c81909e5f29b745107d40f55446017f456f4adcdd58",
     "docs/multi-gateway-todo.md": "8fdabe04b522743c102210263b33e48266165a2c1587f748bd3fbf122f9c623c",
@@ -59,7 +59,7 @@
     "lib/mobile-v1/project-avatar.mjs": "6e1f8398e1769dbaf14e889e75a81e1804b25476cdbf02fa2bb81ecf53674737",
     "lib/mobile-v1/projection.mjs": "cecd9d0ed8088132a2a6f7b7bffc705fd13138880467b5d353455cd8bb3f895d",
     "lib/mobile-v1/public-url.mjs": "6f1875909e68359f1f21ba3789db5d2b1cf55ad3336351e2fa3f72c807c3ee1c",
-    "lib/mobile-v1/server.mjs": "7bec0af27e4076ef11f4239cb22aba179114ec5ce91b37f87a5ab2bc6400d17a",
+    "lib/mobile-v1/server.mjs": "631cae4a968a1ebdeac2a9a04debd2077201fb0ddd515bc930e0d5b0e092ee96",
     "lib/mobile-v1/team-feed.mjs": "604c92337ad68529b61bdf44c610c60803abddfb910068adfe9b92023ab198f4",
     "lib/plugin-management.mjs": "a914e234dcc087a0ea67c0e1f9ccb4071871e3c11c08eee8eca5cd43f55dde60",
     "lib/public-endpoint-check.mjs": "2119ebc4a92d1ef37408f6827a96189b49a2ab71fec73043753e3924e0df187a",

@@ -474,13 +474,20 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
       for (const batch of plan.batches) send(batch)
       return snapshot.seq ?? 0
     }
+    // 回放界标处的实时态：sync.done 到达时回放的数据已全部应用，此刻的 degraded 就是最终态。
+    // 没有这个字段时，静止期（maybeOrder 在签名不变时不发帧、也没有 delta）没有任何帧能清掉
+    // 客户端在缓存水合时置上的 degraded，用户就一直看到「实时状态不可用」（真机：经常不可用、过会儿自己好）。
+    // 形状与 ready 帧一致：{ team, cards }，true = 降级供数。
+    const degradedNow = () => ({ team: team?.degraded === true, cards: cards?.degraded === true })
+    const syncDone = (reason, seq) => send({ type: 'sync.done', instanceId: team?.instanceId ?? null,
+      seq: seq ?? team?.seq ?? 0, degraded: degradedNow(), reason })
     const resnapshot = async (reason) => {
       if (!team) { replyControl('SYNC_UNAVAILABLE', 'The team feed is not available on this gateway.'); return }
       const snapshot = await team.snapshot()
       const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
       send(plan.primary)
       for (const batch of plan.batches) send(batch)
-      send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason })
+      syncDone(reason)
     }
     // 回放判定：缺口必须按 base 链（400ms 合并窗口让 seq 跳号是常态，不能按 +1 判）。
     const replayFrom = async ({ instanceId: wanted, afterSeq, maxDeltas }, reason) => {
@@ -502,7 +509,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
       // 而 resume 水位是独立存储）。补一帧快照兜底：客户端 applySnapshot 是整体替换，
       // 内容与服务端一致，不会污染；每次 caught-up 重连只多这一帧。
       if (answer.frames.length === 0) await sendTeamSnapshot()
-      send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? reason : 'caught-up' })
+      syncDone(answer.frames.length > 0 ? reason : 'caught-up')
     }
     const handleControl = async (frame) => {
       // auth 首次快照/回放还没跑完时先排队：否则 sync.from 会和快照交错，客户端收到重复帧。
@@ -584,7 +591,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
                 for (const delta of answer.frames) send(delta)
                 // caught-up 兜底（理由同 sync.from）：客户端声称追平不等于真有数据。
                 snapshotSeqs.team = answer.frames.length === 0 ? await sendTeamSnapshot() : team.seq ?? 0
-                send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? 'resume' : 'caught-up' })
+                syncDone(answer.frames.length > 0 ? 'resume' : 'caught-up')
                 resumed = true
               } else {
                 replyControl('SYNC_GAP', 'The resume window does not reach back that far; sending a fresh snapshot.')
@@ -599,7 +606,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
             const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
             send(plan.primary)
             for (const batch of plan.batches) send(batch)
-            if (resume) send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: snapshot.seq ?? 0, reason: 'snapshot' })
+            if (resume) syncDone('snapshot', snapshot.seq ?? 0)
           }
         }
         if (cards) {

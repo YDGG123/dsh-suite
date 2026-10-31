@@ -76,7 +76,19 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 
 客户端必须先执行严格 Base64URL 解码（只允许 `A-Z a-z 0-9 - _`，不接受 `=` padding、原始 JSON 或普通 Base64），再解析 JSON 并检查 `version` 与 `expiresAt`。
 
-首次连接必须请求子协议 `dsh-mobile-v1, dsh-pair.<pairingCode>`，并携带 `X-DSH-Device-ID` 请求头；缺少稳定设备 ID 的配对请求会被拒绝，避免每次重连都创建新的可信设备。该值应为客户端在 Keychain 中持久保存的安装级随机 UUID，仅用于重新配对时复用可信设备记录，不能替代配对码或设备 token 完成鉴权。兼容实现也可把一次性配对码放在 `?pairingCode=`；但子协议不会进入常见的 URL access log，因此优先使用子协议。成功后服务端依次发送：
+首次连接必须请求子协议 `dsh-mobile-v1, dsh-pair.<pairingCode>`，并通过 `X-DSH-Device-ID` 请求头或下述 `dsh-device.<clientDeviceId>` 子协议提供稳定设备 ID；缺少或包含非法设备 ID 的配对请求会被拒绝，避免每次重连都创建新的可信设备。该值应为客户端持久保存的安装级随机 UUID（iOS 可存入 Keychain），仅用于重新配对时复用可信设备记录，不能替代配对码或设备 token 完成鉴权。兼容实现也可把一次性配对码放在 `?pairingCode=`；但子协议不会进入常见的 URL access log，因此优先使用子协议。
+
+浏览器等无法设置自定义握手头的客户端，可以把同一安装级设备 ID 与设备名放进子协议列表：
+`dsh-mobile-v1, dsh-pair.<pairingCode>, dsh-device.<clientDeviceId>, dsh-device-name.<base64url(设备名)>`。
+服务端只在缺少 `X-DSH-Device-ID` / `X-DSH-Device-Name`（或该头无效）时回退读取
+`dsh-device.` / `dsh-device-name.` 前缀。子协议中的设备 ID 使用 8–128 个
+`A-Z a-z 0-9 . _ -` 字符，不能包含请求头格式额外允许的 `:`，因为后者不是合法的
+WebSocket 子协议 token 字符；浏览器直接持久化并使用 UUID 即可。设备名的 UTF-8
+Base64URL 编码最长 512 字符。对于上述有效输入，两种传递方式语义相同，`clientDeviceId`
+仍不是凭证，设备名只用于展示，配对码与长期 token 的要求不变。握手时服务端只协商回
+`dsh-mobile-v1`，不会回显 `dsh-device.` / `dsh-device-name.` 或任何密钥。
+
+成功后服务端依次发送：
 
 ```json
 { "kind": "paired", "token": "<长期设备 token>",
@@ -89,6 +101,8 @@ const pairingText = Buffer.from(JSON.stringify(payload), 'utf8').toString('base6
 
 - 推荐：HTTP 请求头 `Authorization: Bearer <token>`
 - WebSocket 子协议：`dsh-mobile-v1, dsh-auth.<token>`
+- 无法设置请求头的浏览器：`dsh-mobile-v1, dsh-auth.<token>, dsh-device.<clientDeviceId>`
+  （`dsh-device.` 仅用于复用可信设备记录，可省略）
 
 长期 token 默认禁止放在 URL query 中，避免被代理日志、浏览器历史和监控系统记录。缺少凭证、凭证无效、配对码过期或重复使用时，HTTP Upgrade 返回 `401 Unauthorized`。
 
@@ -866,6 +880,38 @@ DSH `present` 工具成功后持久化 `deliverables/presented`，移动端根�
 - 默认每块为 512 KiB、同时最多 4 个下载、单个文件最多 512 MiB。部署方可用 `fileDownloadChunkBytes`、`fileDownloadMaxTransfers`、`fileDownloadMaxBytes`、`fileDownloadIdleMs` 调整；`fileDownloadsEnabled: false` 会关闭该能力，且 `hello.capabilities` 不再包含 `file-downloads`。
 - 绝对路径、空路径（`file-download-open`）、`..` 路径段、NUL 字符、工作目录外的符号链接、目录和其他非普通文件都会被拒绝。`file-list` 不返回符号链接，避免客户端误认为其可下载。
 
+### 普通文件上传
+
+已配对连接在启用 `fileUploadsEnabled` 时公布 `file-upload-v1`。上传请求走 control 连接（兼容 legacy），消息走 conversation 连接（兼容 legacy）。普通文件按原始字节进入官方附件存储，取得会话专属 `receiptId`，不接受客户端指定的主机路径。自定义 Host 未组合官方文件上传服务时返回 `file-upload-unavailable`。
+
+| type | 必填参数 | 成功 kind |
+|---|---|---|
+| `file-upload-open` | `requestId`, `sessionId`, `name`, `size`, `sha256` | `file-upload-opened` |
+| `file-upload-chunk` | `requestId`, `uploadId`, `offset`, `data` | `file-upload-chunk-accepted` |
+| `file-upload-finish` | `requestId`, `uploadId` | `file-upload-completed` |
+| `file-upload-cancel` | `requestId`, `uploadId` | `file-upload-cancelled` |
+
+`requestId` 为 1 至 128 字符的非空字符串，所有上传响应和错误均回显。`sessionId` 必须是已有普通会话；新草稿先使用 `session-create`，子智能体暂不支持文件附件。`name` 只允许不带目录和控制字符的 1 至 255 字符文件名。`size` 为非负安全整数，`sha256` 是完整原始字节的 64 位十六进制摘要，允许空文件。
+
+`file-upload-opened` 返回 `uploadId/sessionId/name/size/chunkBytes/maxBytes/idleTimeoutMs`。chunk 使用标准 Base64，`offset` 按解码字节计数，必须等于当前已确认位置；每次等待 `file-upload-chunk-accepted.nextOffset` 后再发下一块，不支持分块流水线或跨连接续传。finish 校验长度和 SHA-256 后通过官方流式接口提交：
+
+```json
+{ "kind": "file-upload-completed", "requestId": "finish-1", "uploadId": "upload-uuid", "sessionId": "s1",
+  "receiptId": "host-receipt-uuid", "sha256": "<64 位十六进制摘要>",
+  "file": { "attachmentId": "opaque-file-id", "name": "报告.pdf", "bytes": 1234 } }
+
+{ "type": "message", "requestId": "submission-uuid", "sessionId": "s1", "text": "分析这个报告",
+  "files": [{ "receiptId": "host-receipt-uuid" }], "mode": "queue" }
+```
+
+含文件消息必须有 `requestId`，会原样传给 Host 用于相同提交的重试去重。`files` 最多 20 项，不允许重复凭证；可以纯文件发送或与已有图片、文字混合。Host 校验凭证所属的准确 Session，并将其转换为原生 file 内容块；上传完成不会自动发送消息。
+
+实时 `user/message` 新增 `event.files: [{attachmentId,name,bytes}]`；历史 `data.content[]` 保留 `{type:"file",attachment:{attachmentId,name,bytes}}`。附件 ID 不等于工作区路径，现有图片 `attachment` 和工作区 `file-download-*` 不能用于按此 ID 下载文件。
+
+默认单文件 512 MiB、每块 256 KiB、全网关最多 4 个活动上传、空闲 2 分钟、Host 提交超时 180 秒。可配置 `fileUploadMaxBytes/fileUploadChunkBytes/fileUploadMaxTransfers/fileUploadIdleMs/fileUploadCommitTimeoutMs`，实际分块上限还受 `maxPayloadBytes` 限制。上传开关独立于下载开关。
+
+uploadId 仅归属创建它的 socket；取消、断线、空闲超时和网关停止会清理网关暂存并中止活动提交。原连接可在短期完成缓存内重试 finish 取得同一结果，缓存最多 128 条、默认保留 2 分钟；不提供断点续传或 Host 附件回滚删除。更完整的官方 WebUI 源码对应关系、JSON 示例、错误表、App 状态机和验收步骤见 [移动端普通文件上传对接指南](docs/file-upload-app-integration.md)。
+
 ### `session-stats` 详细（输入框统计条）
 ```json
 { "type": "session-stats", "sessionId": "session-abc" }
@@ -1155,7 +1201,7 @@ Control/旧单连接接收全局模式状态增量，不受所订阅会话过滤
   "event": { "type": "assistant/message", "turn": 1, "step": 0, "text": "已完成", "reasoning": "", "toolCalls": [] } }
 ```
 `event.type` 覆盖（精炼字段）：
-- `user/message` → `{text, source, images?: ImageAttachmentRef[]}`
+- `user/message` → `{text, source, images?: ImageAttachmentRef[], files?: [{attachmentId,name,bytes}]}`
 - 实时 token 使用独立 `assistant-stream`，不是带持久 seq 的 `assistant/chunk`；详见 [rc.2 接入说明](docs/dsh-rc2-mobile-integration.md)。
 - `assistant/attempt` → `{turn, step, stream[], finish?: {kind, failure?}}`
 - `assistant/message` → `{turn, step, text, reasoning, toolCalls[], interrupted?, usage?, finish?: {kind, failure?}}`
@@ -1395,3 +1441,41 @@ history. Older gateways without the capability continue using one connection.
 取消回执只表示已发出取消信号；原转写随后返回 `speech/cancelled`，资源清理完成前仍占并发名额。断线、网关停止会中止该连接的活动转写和状态订阅。其他连接不能取消这个转写，即使属于同一设备。客户端上滑取消、切换页面或替换草稿后必须忽略旧请求的迟到结果。
 
 错误统一为 `kind:error`，包含 `requestType`, `requestId`, `code`, `message`。网关错误包括 `authentication-required`, `wrong-channel`, `bad-request`, `speech/unavailable`, `speech/busy`, `speech/request-in-progress`, `speech/request-not-found`, `speech/invalid-audio`, `speech/cancelled`, `speech/timeout`, `speech/invalid-response`, `speech/stream-ended`；官方插件的 `speech/transcription-failed` 等错误代码保留。
+
+## 智能体团队与子会话（agent-team-v1 / subagent-conversations-v1）
+
+当前源码新增两个协议 3 可选能力，Host 适配基线为 DSH 0.2.1-rc.2、Session format 4。完整 APP 实施规范见 [智能体团队 APP 详细接入指南](docs/agent-team-app-integration.md)，包含成员与任务完整字段、目录树、视图切换、消息和停止、投影缓存、恢复流程及验收清单。
+
+| 连接 | 请求/推送 | 说明 |
+|---|---|---|
+| control | `agent-team` | 请求 `sessionId` 为 Lead ID，`requestId?` 回显；响应 `agentTeam` 完整值及 `projectionState`、精确值的 `asOfSeq` |
+| control | `subagents` | 请求 `sessionId` 为父节点 ID，`requestId?` 回显；响应 `subagentCatalog` 直接子节点数组及相同投影状态字段 |
+| control | `agent-team-updated` | `{sessionId,asOfSeq,agentTeam}`，团队完整值替换，null 表示失效 |
+| control | `subagents-updated` | `{sessionId,asOfSeq,subagentCatalog}`，父节点直接子目录完整替换，null 表示失效 |
+| control | `subagent-identity-updated` | `{sessionId,asOfSeq,subagent}`，该子会话身份完整值或 null |
+| control | `subagent-timing-updated` | `{sessionId,asOfSeq,subagentTiming}`，该子会话耗时完整值或 null |
+| control | `session-status` | `{sessionId,running}`，全局进程内运行状态；初始/重连用 sessions 刷新 |
+
+两个查询都返回 `projectionState: ready | unavailable | migration-required`。没有投影是 null，空目录是 `[]`，空任务板是团队对象中的 `tasks:[]`；迁移提示没有 `asOfSeq`，不能当作精确基线。未找到会话返回 `session/not-found`。查询不激活 Agent、不调用模型。capability 仅表示网关理解协议，不保证 Host 已启用实验性团队插件。
+
+新增投影键 `agentTeam/subagentCatalog/subagent/subagentTiming` 同时出现在 `projection-baseline`。上述更新与运行状态不受当前聊天 subscribe 过滤，仅发往 control/legacy。Host control 重建会发送替换基线及失效通知；基线未包含冷会话不表示会话删除。各投影按 `(gatewayId, sessionId, projectionKey)` 管理水位，不能跨会话或跨键比较 seq。初始运行状态从 sessions 查询取得，实时状态不具备持久 seq。
+
+子会话沿用现有 `sessionId` 为当前视图 ID，增加 `parentSessionId`（直接父会话）和 `subagentMode`（`continuable | one-shot | unknown`）；这两个字段必须一起提供。普通会话不带它们，external 节点没有本地子会话地址。
+
+```json
+{"type":"subscribe","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","assistantStream":true}
+{"type":"history","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"h1","beforeSeq":20,"historyFormatVersion":4}
+{"type":"message","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"m1","mode":"queue","text":"继续处理当前任务"}
+{"type":"session-cancel","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"stop1"}
+{"type":"tasks","sessionId":"child","parentSessionId":"lead","subagentMode":"continuable","requestId":"todos1"}
+```
+
+- conversation：`history/subscribe/message`；control：`session-cancel/tasks/goal`。`goal` 同样支持子地址。其他操作不能仅凭此能力推定支持子地址。
+- `subscribed`、follower 的 snapshot/event/assistant-stream/reset 回显父子地址；切换使用新 `subscriptionId/streamId`。旧 legacy 持久事件可能只有 sessionId。
+- history、tasks、goal、session-cancel 的正常响应及查询失败回显原请求 requestId（如果提供）。`sent` 对子消息额外返回 `messageId`、父子地址以及原 requestId。
+- 子消息内部使用官方专用 continuation 接口；`message.mode` 仍是 queue/steer，不表示生命周期。只有 continuable 能发送与停止。
+- 共享任务来自 Lead 的 `agentTeam.tasks`，负责人字段是 `ownerName`；成员 `todos` 仍是独立内部待办。
+- 普通子目录包含 continuable/one-shot/external/unknown；按父节点逐级读取，不自动递归。
+- 子会话父子关系由 Host 校验，非法关系返回 `subagent/unauthorized` 等错误；无法继续的模式返回 `subagent/not-resumable`。
+- 发送回执只表示 inbox 接受，不保证执行完成，也不提供自动重试去重保证。断线无回执应核对历史/队列，不能盲目重发。
+- 本次不提供直接创建成员或变更共享任务的移动 RPC；由用户在 Lead 对话中提出要求，Host 团队工具执行，APP 等待权威投影更新。

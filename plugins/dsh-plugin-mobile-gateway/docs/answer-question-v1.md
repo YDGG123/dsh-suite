@@ -98,6 +98,18 @@ if (question === undefined || question.id !== body.questionId) return fail('This
 | 409 `QUESTION_IN_FLIGHT` | 同一 `questionId` 已有一条在途（连点） | **忽略**（第一条的结果会自己回来），不要提示失败、不要重试 |
 | 404 `TARGET_DENIED` | `sessionId` 不在可见团队里（越权/过期会话） | 刷新团队与卡片流；这是客户端状态问题，不是用户操作失败 |
 
+**另一个会让卡片"消失"的正常机制（排查时先查这条）**：用户在该会话里发**任何消息**，都会取代挂着的
+提问卡/视图卡——`ds-bot/src/host/turns.js:492`，注释原话 "Any user message answers or supersedes the
+open question card"。所以「卡片不见了」有两种可能，先分清再查：
+
+1. **落库过、后来被用户消息清掉**（`state.questions` 里已没有；卡片流会发 `card.cleared`，不是
+   `card.answered`——没有 `answered(id)` 就不进已答集合）；
+2. **从未被卡片流发出去**：卡片加入与被清落在同一次合并窗口内时，`collect()` 读到的已经是删后的
+   状态，`card.shown` 一次都不会发——手机端就"从来没见过"。
+
+不要一上来就怀疑 `ask_user` 没落库：写入在 `tools.js:627`，成功文案（"The card is on screen…"）只在
+写入之后返回。
+
 ## 5. 群卡与单聊的差异（**不一样，别当一样**）
 
 服务端先走群卡，再走 Bot 卡（`channel.js:441-447`）：

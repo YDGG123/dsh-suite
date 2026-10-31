@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
+import { Readable } from 'node:stream'
+import { sessionAddress } from './session-target.mjs'
 
 function requireRecord(value, endpoint) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -78,7 +80,7 @@ function sessionListArgs(request) {
  * descriptors. Its public methods intentionally match mobile-gateway domain
  * operations, not the upstream transport envelope.
  */
-export function createDshHostAdapter(typertGateway, peer) {
+export function createDshHostAdapter(typertGateway, peer, connection) {
   if (!typertGateway || typeof typertGateway.invoke !== 'function' || typeof typertGateway.stream !== 'function') {
     throw new Error('mobile-gateway requires the DSH Remote Gateway host service')
   }
@@ -96,6 +98,11 @@ export function createDshHostAdapter(typertGateway, peer) {
   const stream = (namespace, method, args, signal) => typertGateway.stream({
     namespace, method, args, peer, signal,
   })
+  // Dispatch in-process through the official authenticated route; no loopback
+  // HTTP listener, browser cookie, or public /api exposure is required.
+  const uploadHandler = connection?.createSharedFetchHandler?.('/api')
+  const uploadUrl = new URL('http://localhost/api/session/uploadFileBinary')
+  const uploadsAvailable = () => uploadHandler?.requestBodyMode({ method: 'POST', url: uploadUrl }) === 'streaming'
 
   const sessionSnapshot = async (request, signal) => {
     const frame = requireRecord(await firstStreamFrame(
@@ -105,12 +112,13 @@ export function createDshHostAdapter(typertGateway, peer) {
       requestArgs(request),
       signal,
     ), 'session/follow')
-    return readSessionSnapshot(frame, request.address.sessionId)
+    return readSessionSnapshot(frame, request.address.kind === 'subagent'
+      ? request.address.childSessionId : request.address.sessionId)
   }
 
   const history = async (payload, signal) => {
     const request = {
-      address: { kind: 'session', sessionId: payload.sessionId },
+      address: sessionAddress(payload),
       // Older-page requests need only the opening cursor/projections, not another large latest page.
       ...(payload.beforeSeq !== undefined ? { maxMessages: 1 }
         : payload.maxMessages === undefined ? {} : { maxMessages: payload.maxMessages }),
@@ -205,6 +213,33 @@ export function createDshHostAdapter(typertGateway, peer) {
   }
 
   return {
+    files: {
+      available: uploadsAvailable,
+      async upload({ sessionId, name, data }, signal) {
+        if (!uploadsAvailable()) throw Object.assign(new Error('The official file upload service is unavailable'), { code: 'file-upload-unavailable' })
+        const url = new URL(uploadUrl)
+        url.searchParams.set('sessionId', sessionId)
+        url.searchParams.set('name', name)
+        const uploadSignal = signal ? AbortSignal.any([signal, peer.signal]) : peer.signal
+        uploadSignal.throwIfAborted()
+        const source = Readable.from(data, { objectMode: false })
+        try {
+          const response = await uploadHandler.fetch(new Request(url, {
+            method: 'POST', headers: { 'content-type': 'application/octet-stream' },
+            body: Readable.toWeb(source), duplex: 'half',
+            signal: uploadSignal,
+          }), peer)
+          if (!response.ok) throw Object.assign(new Error(`Official file upload returned HTTP ${response.status}`), { code: 'file-upload-unavailable' })
+          const result = await response.json()
+          if (result.ok !== true) throw Object.assign(new Error(result.error?.message || 'Official file upload failed'),
+            { code: result.error?.code || 'file-upload-failed' })
+          return requireRecord(result.value, 'file upload')
+        } catch (error) {
+          uploadSignal.throwIfAborted()
+          throw error
+        } finally { source.destroy() }
+      },
+    },
     speech: {
       catalog: (signal) => invoke('speech', 'catalog', {}, signal),
       follow: (signal) => stream('speech', 'follow', {}, signal),
@@ -216,10 +251,22 @@ export function createDshHostAdapter(typertGateway, peer) {
       transcribe: (request, signal) => invoke('speech', 'transcribe', { request }, signal),
     },
     sessions: {
+      projections: (payload, signal) => invoke('session', 'projections', requestArgs(payload), signal),
       list: (payload = {}, signal) => invoke('session', 'list', sessionListArgs(payload), signal),
       search: (payload, signal) => invoke('session', 'search', requestArgs(payload), signal),
       create: (payload, signal) => invoke('session', 'create', requestArgs(payload), signal),
       prompt: (payload, signal) => serializeSession(payload.sessionId, async () => {
+        if (payload.parentSessionId !== undefined) {
+          if (payload.subagentMode !== 'continuable') {
+            throw Object.assign(new Error('only continuable subagents accept messages'), { code: 'subagent/not-resumable' })
+          }
+          return invoke('subagents', 'prompt', requestArgs({
+            requestId: payload.requestId ?? crypto.randomUUID(),
+            parentSessionId: payload.parentSessionId, childSessionId: payload.sessionId,
+            mode: 'continuable', delivery: payload.mode, content: payload.content,
+            ...(payload.clientTimeZone === undefined ? {} : { clientTimeZone: payload.clientTimeZone }),
+          }), signal)
+        }
         // Accepted input may not have reached turn/start yet. Keep that gap
         // locked; the persistent event or a subsequent read retires the marker.
         const alreadyAdmitted = admittedPrompts.has(payload.sessionId)
@@ -233,7 +280,13 @@ export function createDshHostAdapter(typertGateway, peer) {
       }),
       attachment: (payload, signal) => invoke('session', 'attachment', requestArgs(payload), signal),
       fork: (payload, signal) => invoke('session', 'fork', requestArgs(payload), signal),
-      cancel: (payload, signal) => invoke('session', 'cancel', requestArgs(payload), signal),
+      cancel: (payload, signal) => payload.parentSessionId === undefined
+        ? invoke('session', 'cancel', requestArgs(payload), signal)
+        : payload.subagentMode !== 'continuable'
+          ? Promise.reject(Object.assign(new Error('only continuable subagents accept interrupts'), { code: 'subagent/not-resumable' }))
+          : invoke('subagents', 'interruptByParent', {
+            parentSessionId: payload.parentSessionId, childSessionId: payload.sessionId, mode: 'continuable',
+          }, signal),
       updateQueue: (payload, signal) => invoke('session', 'updateQueue', requestArgs(payload), signal),
       rename: (payload, signal) => invoke('session', 'rename', requestArgs(payload), signal),
       selectModel: (payload, signal) => invoke('session', 'selectModel', requestArgs(payload), signal),
@@ -377,10 +430,10 @@ export function createDshHostAdapter(typertGateway, peer) {
     observeSessionEvent(sessionId, event) {
       if (event.type === 'turn/start') admittedPrompts.delete(sessionId)
     },
-    openSessionStream(sessionId, signal) {
+    openSessionStream(sessionId, signal, target = { sessionId }) {
       return stream('session', 'follow',
         // Bound the opening window at the Host; older records remain available via session.page.
-        requestArgs({ address: { kind: 'session', sessionId }, maxMessages: 12, assistantStream: true }),
+        requestArgs({ address: sessionAddress(target), maxMessages: 12, assistantStream: true }),
         signal,
       )
     },

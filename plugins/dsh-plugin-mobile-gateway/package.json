@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-mobile-gateway",
-  "version": "0.10.4",
-  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、插件管理、官方语音输入、文件卡片与安全文件预览、局域网及 Cloudflare Tunnel，以及自适应深浅色控制面板。0.10.4 精简会话列表投影，仅保留标题与投影切点，修复大量会话通过公网隧道传输时超时的问题；保留会话元信息和历史完整投影，现有移动客户端无需配套修改。",
+  "version": "0.11.1",
+  "description": "DeepSeek Harness 移动网关，支持安全设备配对、实时会话同步、智能体团队与子会话、插件管理、官方语音输入，以及局域网和 Cloudflare Tunnel。0.11.1 新增普通文件分块上传，支持 SHA-256 校验、进度确认、取消与断线清理，复用 DSH 官方附件存储和会话专属凭证，支持文件随消息发送及实时和历史文件引用；提供详细 App 对接指南。",
   "main": "lib/index.mjs",
   "files": [
     "bin",
@@ -26,7 +26,7 @@
   },
   "bin": "bin/setup-ip.mjs",
   "scripts": {
-    "test": "export DSH_MOBILE_GATEWAY_LOG=${DSH_MOBILE_GATEWAY_LOG:-/tmp/mobile-gateway-test.log} && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/pair-payload.test.mjs && node --test test/panel-script.test.mjs && node --test test/pair-frame-order.test.mjs && node --test test/extra-routes.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && node --test test/mobile-v1-projection.test.mjs && node --test test/mobile-v1-public-url.test.mjs && node --test test/mobile-v1-sessions.test.mjs && node --test test/mobile-v1-server.test.mjs && node --test test/mobile-v1-admin.test.mjs && node --test test/mobile-v1-host-service.test.mjs && node --test test/mobile-v1-wiring.test.mjs && node --test test/mobile-v1-team-feed.test.mjs && node --test test/mobile-v1-chunked.test.mjs && node --test test/mobile-v1-sync-resume.test.mjs"
+    "test": "export DSH_MOBILE_GATEWAY_LOG=${DSH_MOBILE_GATEWAY_LOG:-/tmp/mobile-gateway-test.log} && node test/wire-json.test.mjs && node test/setup-ip.test.mjs && node test/host-adapter.test.mjs && node --test test/file-upload.test.mjs && node test/speech-input.test.mjs && node test/plugin-management.test.mjs && node test/session-preset.test.mjs && node test/session-follower.test.mjs && node --test test/agent-team.test.mjs && node test/session-event-details.test.mjs && node test/gateway.test.mjs && node --test test/pair-payload.test.mjs && node --test test/panel-script.test.mjs && node --test test/pair-frame-order.test.mjs && node --test test/extra-routes.test.mjs && node --test test/approval-replay.test.mjs && node test/auth.test.mjs && node test/lan.test.mjs && node test/cloudflared-binary.test.mjs && node test/cloudflare-tunnel.test.mjs && node --test test/public-endpoint-check.test.mjs && node test/gateway-tools.test.mjs && node test/multi-gateway.test.mjs && node --test test/mobile-v1-projection.test.mjs && node --test test/mobile-v1-public-url.test.mjs && node --test test/mobile-v1-sessions.test.mjs && node --test test/mobile-v1-server.test.mjs && node --test test/mobile-v1-admin.test.mjs && node --test test/mobile-v1-host-service.test.mjs && node --test test/mobile-v1-wiring.test.mjs && node --test test/mobile-v1-team-feed.test.mjs && node --test test/mobile-v1-chunked.test.mjs && node --test test/mobile-v1-sync-resume.test.mjs && node --test test/history-cursor.test.mjs && node --test test/history-segments.test.mjs && node --test test/channel-parity.test.mjs && node --test test/mobile-v1-answer-question.test.mjs"
   },
   "exports": {
     ".": "./lib/index.mjs",

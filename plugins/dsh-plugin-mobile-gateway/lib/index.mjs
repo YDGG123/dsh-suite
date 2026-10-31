@@ -15,6 +15,7 @@ import { assistantFinish, failureDetails, toolResultDetails, turnReasonDetails }
 // Wire protocol (JSON text frames):
 //   first pair:       Sec-WebSocket-Protocol: dsh-mobile-v1, dsh-pair.<one-time-code>
 //                     X-DSH-Device-ID: <stable installation UUID>
+//                     (or dsh-device.<id> in the subprotocol list)
 //                     -> { "kind": "paired", "token", "device" } (exactly once)
 //   later connects:   Authorization: Bearer <device-token>
 //                     or Sec-WebSocket-Protocol: dsh-mobile-v1, dsh-auth.<device-token>
@@ -22,7 +23,7 @@ import { assistantFinish, failureDetails, toolResultDetails, turnReasonDetails }
 //                     { "type": "subscribe", "sessionId": "..." }  (optional filter)
 //                     { "type": "unsubscribe" }
 //                     { "type": "message", "sessionId"?, "text"?, "images"?:
-//                       [{ "mediaType", "data", "name"? }], "mode"?: "queue"|"steer",
+//                       [{ "mediaType", "data", "name"? }], "files"?: [{ "receiptId" }], "mode"?: "queue"|"steer",
 //                       "workspaceId"?, "cwd"?, "clientTimeZone"? }
 //                        sessionId omitted -> a new session is created first; the
 //                        new session can be placed in a workspace via workspaceId
@@ -101,6 +102,10 @@ import { assistantFinish, failureDetails, toolResultDetails, turnReasonDetails }
 //                       "path", "name", "mediaType", "size", "chunkBytes" }
 //                     { "kind": "file-download-chunk", "transferId", "offset", "data", "eof", "sha256"? }
 //                     { "kind": "file-download-cancelled", "transferId" }
+//                     { "kind": "file-upload-opened", "requestId", "uploadId", "sessionId", "name", "size", "chunkBytes", "maxBytes", "idleTimeoutMs" }
+//                     { "kind": "file-upload-chunk-accepted", "requestId", "uploadId", "sessionId", "nextOffset" }
+//                     { "kind": "file-upload-completed", "requestId", "uploadId", "sessionId", "receiptId", "file", "sha256" }
+//                     { "kind": "file-upload-cancelled", "requestId", "uploadId", "sessionId" }
 //                     { "kind": "session-cancelled", "sessionId", "accepted": true }
 //                     { "kind": "queue-item-updated", "sessionId", "itemId", "action", "accepted": true }
 //                     { "kind": "session-queues", "queues": { "<sessionId>": [...] } }
@@ -138,8 +143,10 @@ import { WebSocketServer } from 'ws'
 import devicesModule from './devices.js'
 import { createDshHostAdapter, DSH_VERSION, SESSION_FORMAT_VERSION } from './dsh-host-adapter.mjs'
 import { createSpeechInputManager, SPEECH_REQUEST_TYPES } from './speech-input.mjs'
+import { createFileUploadManager, FILE_UPLOAD_REQUEST_TYPES, FILE_UPLOAD_DEFAULTS } from './file-upload.mjs'
 import { handlePluginQuery, PLUGIN_REQUEST_TYPES } from './plugin-management.mjs'
 import { createSessionFollower } from './session-follower.mjs'
+import { parseSessionTarget, TEAM_PROJECTION_KINDS } from './session-target.mjs'
 import { createGatewayState, GATEWAY_MODES } from './gateway-state.mjs'
 import { createCloudflareTunnel } from './cloudflare-tunnel.mjs'
 import { startMobileV1 } from './mobile-v1/index.mjs'
@@ -242,6 +249,12 @@ const Config = Schema.object({
   fileDownloadChunkBytes: Schema.natural().min(64 * 1024).max(1024 * 1024).default(DEFAULT_FILE_DOWNLOAD_CHUNK_BYTES),
   fileDownloadIdleMs: Schema.natural().min(10_000).max(30 * 60 * 1000).default(DEFAULT_FILE_DOWNLOAD_IDLE_MS),
   fileDownloadMaxTransfers: Schema.natural().min(1).max(16).default(DEFAULT_FILE_DOWNLOAD_MAX_TRANSFERS),
+  fileUploadsEnabled: Schema.boolean().default(FILE_UPLOAD_DEFAULTS.fileUploadsEnabled),
+  fileUploadMaxBytes: Schema.natural().min(1024 * 1024).max(2 * 1024 * 1024 * 1024).default(FILE_UPLOAD_DEFAULTS.fileUploadMaxBytes),
+  fileUploadChunkBytes: Schema.natural().min(64 * 1024).max(1024 * 1024).default(FILE_UPLOAD_DEFAULTS.fileUploadChunkBytes),
+  fileUploadMaxTransfers: Schema.natural().min(1).max(16).default(FILE_UPLOAD_DEFAULTS.fileUploadMaxTransfers),
+  fileUploadIdleMs: Schema.natural().min(10_000).max(30 * 60 * 1000).default(FILE_UPLOAD_DEFAULTS.fileUploadIdleMs),
+  fileUploadCommitTimeoutMs: Schema.natural().min(10_000).max(30 * 60 * 1000).default(FILE_UPLOAD_DEFAULTS.fileUploadCommitTimeoutMs),
   adminLoopbackOnly: Schema.boolean().default(true),
   publicUrl: Schema.string().default(''),
   deviceFile: Schema.string().default(''),
@@ -312,6 +325,12 @@ function imagesOf(blocks) {
   return images
 }
 
+function filesOf(blocks) {
+  return blocks.filter(block => block?.type === 'file' && block.attachment).map(({ attachment }) => ({
+    attachmentId: attachment.attachmentId, name: attachment.name, bytes: attachment.bytes,
+  }))
+}
+
 // Build the small, owned JSON wire record for one session event. Reads only
 // leaf fields of the live SessionEvent — never serializes live objects.
 function buildWireEvent(session, event) {
@@ -323,6 +342,7 @@ function buildWireEvent(session, event) {
   switch (event.type) {
     case 'user/message': {
       const images = imagesOf(d.content || [])
+      const files = filesOf(d.content || [])
       return Object.assign(base, {
         event: {
           type: 'user/message',
@@ -330,6 +350,7 @@ function buildWireEvent(session, event) {
           source: d.source && d.source.kind,
           ...(typeof d.id === 'string' && d.id ? { raw: { id: d.id } } : {}),
           ...(images.length ? { images } : {}),
+          ...(files.length ? { files } : {}),
         },
       })
     }
@@ -570,18 +591,39 @@ async function admitCommand(host, msg) {
 // Handle one mobile -> agent message through the official host API. Returns
 // the wire frame to send back, or null when nothing should be sent.
 async function admitMessage(api, msg) {
+  const target = parseSessionTarget(msg, { optional: true })
+  if (target.error) return target.error
+  const requestIdentity = typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}
+  const rejectMessage = frame => ({ ...frame, requestType: 'message', ...target.value, ...requestIdentity })
+  if (target.value.parentSessionId !== undefined && target.value.subagentMode !== 'continuable') {
+    return { kind: 'error', code: 'subagent/not-resumable', requestType: 'message', ...target.value,
+      ...requestIdentity, message: 'only continuable subagents accept messages' }
+  }
   const preset = parseAgentPreset(msg, 'message')
-  if (preset.error) return preset.error
+  if (preset.error) return rejectMessage(preset.error)
   if (preset.value !== undefined && typeof msg.sessionId === 'string' && msg.sessionId.trim()) {
-    return { kind: 'error', code: 'bad-request', requestType: 'message',
-      message: 'use select-agent-preset before sending a message to an existing session' }
+    return rejectMessage({ kind: 'error', code: 'bad-request',
+      message: 'use select-agent-preset before sending a message to an existing session' })
   }
   const text = typeof msg.text === 'string' ? msg.text.trim() : ''
   const parsedImages = parseWireImages(msg.images, 'message')
-  if (parsedImages.error) return parsedImages.error
+  if (parsedImages.error) return rejectMessage(parsedImages.error)
   const imageParts = parsedImages.value
-  if (!text && imageParts.length === 0) {
-    return { kind: 'error', code: 'bad-request', message: 'message requires non-empty text or at least one image' }
+  const files = msg.files === undefined ? [] : msg.files
+  if (!Array.isArray(files) || files.length > 20 || files.some(file => !file || typeof file.receiptId !== 'string'
+    || !file.receiptId.trim() || file.receiptId.length > 256)
+    || new Set(files.map(file => file.receiptId)).size !== files.length) {
+    return rejectMessage({ kind: 'error', code: 'bad-request', message: 'files must contain at most 20 distinct receiptId entries' })
+  }
+  if (files.length && (target.value.parentSessionId !== undefined || typeof msg.sessionId !== 'string' || !msg.sessionId.trim())) {
+    return rejectMessage({ kind: 'error', code: target.value.parentSessionId ? 'subagent/attachment-invalid' : 'bad-request',
+      message: 'file receipts require an existing ordinary session' })
+  }
+  if (files.length && (typeof msg.requestId !== 'string' || !msg.requestId.trim() || msg.requestId.length > 128)) {
+    return rejectMessage({ kind: 'error', code: 'bad-request', message: 'file messages require a requestId of 1..128 characters' })
+  }
+  if (!text && imageParts.length === 0 && files.length === 0) {
+    return rejectMessage({ kind: 'error', code: 'bad-request', message: 'message requires text, images or uploaded file receipts' })
   }
   const mode = msg.mode === 'steer' ? 'steer' : 'queue'
 
@@ -605,10 +647,13 @@ async function admitMessage(api, msg) {
     }
 
     const resp = await api.sessions.prompt({
+      ...target.value,
       sessionId,
       mode,
+      ...(target.value.parentSessionId === undefined && files.length === 0 ? {} : requestIdentity),
       // Match the official WebUI ordering: images first, optional text last.
-      content: [...imageParts, ...(text ? [{ type: 'text', text }] : [])],
+      content: [...imageParts, ...files.map(file => ({ type: 'file', receiptId: file.receiptId })),
+        ...(text ? [{ type: 'text', text }] : [])],
       ...(typeof msg.clientTimeZone === 'string' && msg.clientTimeZone.trim() ? { clientTimeZone: msg.clientTimeZone.trim() } : {}),
     })
     log(`mobile message accepted: session=${sessionId} mode=${mode} images=${imageParts.length} text="${text.slice(0, 60)}"`)
@@ -616,13 +661,19 @@ async function admitMessage(api, msg) {
       kind: 'sent',
       sessionId,
       mode,
+      ...requestIdentity,
+      ...(target.value.parentSessionId === undefined ? {} : {
+        parentSessionId: target.value.parentSessionId, subagentMode: target.value.subagentMode,
+        messageId: resp.messageId,
+      }),
       ...(resp.command ? { command: resp.command } : {}),
     }
   } catch (error) {
     const code = error && error.code ? error.code : 'internal'
     const message = error && error.message ? error.message : String(error)
     log(`mobile message failed: ${message}`)
-    return { kind: 'error', code, message, ...(sessionId ? { sessionId } : {}) }
+    return { kind: 'error', code, message, requestType: 'message', ...target.value,
+      ...requestIdentity, ...(sessionId ? { sessionId } : {}) }
   }
 }
 
@@ -1115,13 +1166,13 @@ function requireGoalRef(msg, sessionId) {
   return { value: { id, revision } }
 }
 
-async function readSessionProjection(api, type, sessionId, key) {
-  const history = await proxyQuery(api, 'history', api.sessions.history.bind(api.sessions), { sessionId })
-  if (history.kind !== 'history') return history
+async function readSessionProjection(api, type, sessionId, key, target = { sessionId }) {
+  const history = await proxyQuery(api, 'history', api.sessions.history.bind(api.sessions), { ...target, maxMessages: 1 })
+  if (history.kind !== 'history') return { ...history, ...target, requestType: type }
   const values = (history.projections && history.projections.values) || {}
   return {
     kind: type,
-    sessionId,
+    ...target,
     asOfSeq: history.projections ? history.projections.asOfSeq : undefined,
     [key]: Object.prototype.hasOwnProperty.call(values, key) ? values[key] : null,
   }
@@ -1443,6 +1494,31 @@ function parseAgentPreset(msg, requestType, required = false) {
 // Dispatch one mobile query frame; returns the wire frame to send back.
 async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
   if (PLUGIN_REQUEST_TYPES.has(msg.type)) return handlePluginQuery(api, msg, pluginContext)
+  if (msg.type === 'agent-team' || msg.type === 'subagents') {
+    const session = requireSessionId(msg)
+    const identity = typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}
+    if (session.error) return { ...session.error, ...identity }
+    const sessionId = session.value
+    const key = msg.type === 'agent-team' ? 'agentTeam' : 'subagentCatalog'
+    try {
+      const snapshot = await api.sessions.projections({ sessionId })
+      if (snapshot === null) throw Object.assign(new Error('session not found'), { code: 'session/not-found' })
+      if (!['sequenced', 'migration-required'].includes(snapshot?.kind)
+        || !snapshot.values || (snapshot.kind === 'sequenced' && !Number.isSafeInteger(snapshot.asOfSeq))) {
+        throw new Error('invalid session projections')
+      }
+      const value = snapshot.values[key] ?? null
+      if (value !== null && (key === 'subagentCatalog' ? !Array.isArray(value)
+        : !Array.isArray(value.members) || !Array.isArray(value.tasks))) throw new Error('invalid team projection')
+      return { kind: msg.type, sessionId, ...identity,
+        projectionState: snapshot.kind === 'migration-required' ? 'migration-required'
+          : value === null ? 'unavailable' : 'ready',
+        ...(snapshot.kind === 'sequenced' ? { asOfSeq: snapshot.asOfSeq } : {}), [key]: value }
+    } catch (error) {
+      return { kind: 'error', code: error.code || 'internal', message: error.message,
+        requestType: msg.type, sessionId, ...identity }
+    }
+  }
   if (msg.type === 'session-agent-preset' || msg.type === 'select-agent-preset') {
     const session = requireSessionId(msg)
     const preset = parseAgentPreset(msg, msg.type, msg.type === 'select-agent-preset')
@@ -1488,12 +1564,12 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
     }) }
   }
   if (msg.type === 'history') {
-    const sessionId = typeof msg.sessionId === 'string' && msg.sessionId.trim() !== '' ? msg.sessionId.trim() : null
-    if (!sessionId) {
-      return { kind: 'error', code: 'bad-request', message: 'history requires a sessionId', requestType: 'history' }
-    }
+    const target = parseSessionTarget(msg)
+    if (target.error) return target.error
+    const { sessionId } = target.value
+    const identity = typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}
     const cursorError = validateHistoryCursor(msg, sessionId, 'beforeSeq')
-    if (cursorError) return cursorError
+    if (cursorError) return { ...cursorError, ...target.value, ...identity }
     // 归属解析（这条通道以前完全没有）：解析失败/被拒时**不查宿主**，避免先读后拒。
     let owner = null
     if (typeof pluginContext?.historyOwner === 'function') {
@@ -1502,18 +1578,16 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
           message: error?.message ?? String(error) }
       }
     }
-    const payload = { sessionId }
+    // 上游 0.11：target.value 可能带 parentSessionId/subagentMode（子会话寻址），
+    // 与我们的 Bot 分段寻址是两套 sessionId 空间，原样透传给宿主即可。
+    const payload = { ...target.value }
     if (typeof msg.beforeSeq === 'number' && Number.isFinite(msg.beforeSeq)) payload.beforeSeq = msg.beforeSeq
     if (typeof msg.maxMessages === 'number' && Number.isFinite(msg.maxMessages)) payload.maxMessages = msg.maxMessages
     const frame = await proxyQuery(api, 'history', api.sessions.history.bind(api.sessions), payload)
-    if (frame.kind !== 'history') return frame
-    const page = historyPage(frame, { ...msg, sessionId })
-    // 两层语义要分得清：
-    //   hasMore: 本段还有更早内容 → 客户端继续用 nextBeforeSeq 翻本段；
-    //   previousSessionId: 本段到头的**上一段**标识 → 客户端换 sessionId 再发一次 history
-    //                       （beforeSeq 不传，宿主会从该段最新一页开始）。
-    // 只有 hasMore 不为真时给入口：否则客户端会在两段之间来回跳。拿不出游标时
-    // historyPage 已把 hasMore 降级为 false，那种情况也属于「本段到头」，同样给入口。
+    if (frame.kind !== 'history') return { ...frame, ...target.value, ...identity }
+    const page = { ...historyPage(frame, { ...msg, sessionId }), ...target.value, ...identity }
+    // 两层语义：hasMore 是本段还有更早内容（用 nextBeforeSeq 继续翻本段）；
+    // previousSessionId 是本段到头后的上一段入口（换 sessionId 再发一次 history）。
     if (owner?.previous === undefined || page.hasMore === true) return page
     return { ...page, previousSessionId: owner.previous }
   }
@@ -1583,16 +1657,17 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
     return frame
   }
   if (msg.type === 'session-cancel') {
-    const sessionId = requireSessionId(msg)
-    if (sessionId.error) return sessionId.error
+    const target = parseSessionTarget(msg)
+    if (target.error) return target.error
+    const identity = typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}
     const frame = await proxyQuery(
       api,
       'session-cancel',
       api.sessions.cancel.bind(api.sessions),
-      { sessionId: sessionId.value },
+      target.value,
     )
-    if (frame.kind === 'error') return { ...frame, sessionId: sessionId.value }
-    return { ...frame, kind: 'session-cancelled', sessionId: sessionId.value }
+    if (frame.kind === 'error') return { ...frame, ...target.value, ...identity }
+    return { ...frame, kind: 'session-cancelled', ...target.value, ...identity }
   }
   if (msg.type === 'queue-update') {
     const sessionId = requireSessionId(msg)
@@ -1895,15 +1970,12 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
       contextPressure: values.contextPressure || null,
     }
   }
-  if (msg.type === 'tasks') {
-    const sessionId = requireSessionId(msg)
-    if (sessionId.error) return sessionId.error
-    return readSessionProjection(api, 'tasks', sessionId.value, 'todos')
-  }
-  if (msg.type === 'goal') {
-    const sessionId = requireSessionId(msg)
-    if (sessionId.error) return sessionId.error
-    return readSessionProjection(api, 'goal', sessionId.value, 'goal')
+  if (msg.type === 'tasks' || msg.type === 'goal') {
+    const target = parseSessionTarget(msg)
+    if (target.error) return target.error
+    const frame = await readSessionProjection(api, msg.type, target.value.sessionId,
+      msg.type === 'tasks' ? 'todos' : 'goal', target.value)
+    return { ...frame, ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}) }
   }
   if (msg.type === 'goal-edit') {
     const sessionId = requireSessionId(msg)
@@ -2061,18 +2133,45 @@ function extractCredential(req, allowQueryToken) {
   return undefined
 }
 
+const CLIENT_DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
+// A raw subprotocol must also be a valid RFC 6455 token. In particular, ':'
+// is valid in the header form but cannot be constructed by browser clients.
+const CLIENT_DEVICE_ID_SUBPROTOCOL_PATTERN = /^[A-Za-z0-9._-]{8,128}$/
+const MAX_ENCODED_DEVICE_NAME_LENGTH = 512
+
 function extractClientDeviceId(req) {
-  const value = req.headers['x-dsh-device-id']
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  return /^[A-Za-z0-9._:-]{8,128}$/.test(normalized) ? normalized : undefined
+  const header = req.headers['x-dsh-device-id']
+  if (typeof header === 'string') {
+    const normalized = header.trim()
+    if (CLIENT_DEVICE_ID_PATTERN.test(normalized)) return normalized
+  }
+  // 浏览器等客户端无法设置自定义握手头，而子协议是浏览器唯一能自定义的握手元数据。
+  // 让这类客户端把同一安装级设备 ID 放进 `dsh-device.<id>` 子协议即可完成配对。
+  // 设备 ID 不是凭证：配对仍需要一次性配对码，长期 token 仍由 claimPairing() 签发。
+  for (const protocol of parseProtocols(req)) {
+    if (!protocol.startsWith('dsh-device.')) continue
+    const normalized = protocol.slice('dsh-device.'.length).trim()
+    if (CLIENT_DEVICE_ID_SUBPROTOCOL_PATTERN.test(normalized)) return normalized
+  }
+  return undefined
 }
 
 function extractClientDeviceName(req) {
   const value = req.headers['x-dsh-device-name']
-  if (typeof value !== 'string' || value.length > 512 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return undefined
-  const name = Buffer.from(value, 'base64').toString('utf8').trim()
-  return name && !/[\u0000-\u001f\u007f\ufffd]/.test(name) ? name.slice(0, 80) : undefined
+  if (typeof value === 'string' && value.length <= MAX_ENCODED_DEVICE_NAME_LENGTH && /^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    const name = Buffer.from(value, 'base64').toString('utf8').trim()
+    if (name && !/[\u0000-\u001f\u007f\ufffd]/.test(name)) return name.slice(0, 80)
+  }
+  // 浏览器无法设置 X-DSH-Device-Name 请求头，可把设备名（UTF-8 的 Base64URL）放进
+  // `dsh-device-name.<value>` 子协议；设备名只用于展示，不参与鉴权。
+  for (const protocol of parseProtocols(req)) {
+    if (!protocol.startsWith('dsh-device-name.')) continue
+    const encoded = protocol.slice('dsh-device-name.'.length)
+    if (encoded.length > MAX_ENCODED_DEVICE_NAME_LENGTH || !/^[A-Za-z0-9_-]+$/.test(encoded)) continue
+    const name = Buffer.from(encoded, 'base64url').toString('utf8').trim()
+    if (name && !/[\u0000-\u001f\u007f\ufffd]/.test(name)) return name.slice(0, 80)
+  }
+  return undefined
 }
 
 function rejectUpgrade(socket, status, message, probe) {
@@ -2282,7 +2381,7 @@ const plugin = {
     // 已配对设备沿用本机用户权限；身份只由 Host 创建，不能由移动端参数指定。
     // 问答与审批仍由本插件的 Host 监听器处理，无需另开 Remote 交互流。
     const peer = ctx.connection.createPeer({ principal: { kind: 'owner' }, interactions: 'none' })
-    const api = createDshHostAdapter(ctx.typertGateway, peer)
+    const api = createDshHostAdapter(ctx.typertGateway, peer, ctx.connection)
     const host = api
     const agentDefaultModel = ctx.agentDefaultModel
     // WS 历史通道的归属解析（bot 分段）：名册取 ds-bot 的 dsBotTeam，与手机看到的是同一份。
@@ -2308,6 +2407,7 @@ const plugin = {
       fileDownloadChunkBytes: DEFAULT_FILE_DOWNLOAD_CHUNK_BYTES,
       fileDownloadIdleMs: DEFAULT_FILE_DOWNLOAD_IDLE_MS,
       fileDownloadMaxTransfers: DEFAULT_FILE_DOWNLOAD_MAX_TRANSFERS,
+      ...FILE_UPLOAD_DEFAULTS,
       adminLoopbackOnly: true,
       publicUrl: '',
       deviceFile: '',
@@ -2365,12 +2465,14 @@ const plugin = {
     const pendingQuestions = new Map()
     const pendingApprovals = new Map()
     const fileTransfers = createFileTransferManager(api, options)
+    const fileUploads = createFileUploadManager(api, options)
     const speechInput = createSpeechInputManager(api, options)
     const fileTransferExpiryTimer = setInterval(() => {
       fileTransfers.expire().catch((error) => {
         log(`file download expiry failed: ${error && error.message ? error.message : String(error)}`)
       })
-    }, Math.min(options.fileDownloadIdleMs, 30_000))
+      fileUploads.expire().catch(error => log(`file upload expiry failed: ${error.message}`))
+    }, Math.min(options.fileDownloadIdleMs, options.fileUploadIdleMs, 30_000))
     const backgroundStreamAbort = new AbortController()
     let archivedSessionIds = null
     let sessionQueues = null
@@ -3078,8 +3180,8 @@ const plugin = {
         if (credential && credential.kind === 'pairing') {
           const clientDeviceId = extractClientDeviceId(req)
           if (!clientDeviceId) {
-            log('pairing rejected: missing X-DSH-Device-ID (outdated client)')
-            rejectUpgrade(socket, 400, 'pairing requires X-DSH-Device-ID; update the iOS client')
+            log('pairing rejected: missing or invalid stable device ID')
+            rejectUpgrade(socket, 400, 'pairing requires a stable device ID via X-DSH-Device-ID or dsh-device.<id>')
             return
           }
           paired = registry.claimPairing(credential.value, clientDeviceId, extractClientDeviceName(req))
@@ -3151,12 +3253,20 @@ const plugin = {
             const conversationRequest = ['message', 'history', 'subscribe', 'unsubscribe'].includes(msg.type)
             if ((ws.mobileChannel === 'control' && conversationRequest) ||
                 (ws.mobileChannel === 'conversation' && !conversationRequest && msg.type !== 'ping')) {
-              ws.send(stringifyWireFrame({ kind: 'error', code: 'wrong-channel', requestType: msg.type, message: 'Request belongs to the other mobile channel' }))
+              ws.send(stringifyWireFrame({ kind: 'error', code: 'wrong-channel', requestType: msg.type,
+                ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}), message: 'Request belongs to the other mobile channel' }))
               return
             }
 
             if (msg.type === 'ping') {
               ws.send(stringifyWireFrame({ kind: 'pong', at: Date.now() }))
+            } else if (FILE_UPLOAD_REQUEST_TYPES.has(msg.type)) {
+              if (!ws.deviceId) {
+                sendFrame({ kind: 'error', code: 'authentication-required', requestType: msg.type,
+                  ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}), message: 'File uploads require a paired device' })
+                return
+              }
+              void fileUploads.handle(ws, msg).then(sendFrame)
             } else if (SPEECH_REQUEST_TYPES.has(msg.type)) {
               if (!ws.deviceId) {
                 sendFrame({ kind: 'error', code: 'authentication-required', requestType: msg.type,
@@ -3166,6 +3276,8 @@ const plugin = {
               }
               void speechInput.handle(ws, msg, sendFrame).then(sendFrame)
             } else if (msg.type === 'subscribe') {
+              const target = parseSessionTarget(msg, { optional: true })
+              if (target.error) { sendFrame(target.error); return }
               if (msg.assistantStream !== undefined && typeof msg.assistantStream !== 'boolean') {
                 sendFrame({ kind: 'error', code: 'bad-request', requestType: 'subscribe', message: 'assistantStream must be a boolean' })
                 return
@@ -3179,9 +3291,9 @@ const plugin = {
               ws.filterSessionId = sessionId
               ws.sessionFollowerActive = msg.assistantStream === true
               const subscriptionId = crypto.randomUUID()
-              sendFrame({ kind: 'subscribed', sessionId: sessionId || null, subscriptionId, assistantStream: ws.sessionFollowerActive })
+              sendFrame({ kind: 'subscribed', ...target.value, sessionId: sessionId || null, subscriptionId, assistantStream: ws.sessionFollowerActive })
               if (ws.sessionFollowerActive) {
-                void ws.sessionFollower.start(sessionId, subscriptionId).catch(error => {
+                void ws.sessionFollower.start(sessionId, subscriptionId, target.value).catch(error => {
                   log(`session follower failed: ${error.message}`)
                   if (ws.readyState === 1) ws.close(1011, 'session follower failed')
                 })
@@ -3206,10 +3318,17 @@ const plugin = {
                 if (frame && ws.readyState === 1) ws.send(stringifyWireFrame(frame))
               })
             } else if (msg.type === 'message') {
+              if (Array.isArray(msg.files) && msg.files.length > 0 && (!ws.deviceId || !options.fileUploadsEnabled)) {
+                sendFrame({ kind: 'error', code: !ws.deviceId ? 'authentication-required' : 'file-upload-disabled',
+                  requestType: 'message', ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
+                  message: 'File attachments require paired-device file upload access' })
+                return
+              }
               admitMessage(api, msg).then((frame) => {
                 if (frame && ws.readyState === 1) ws.send(stringifyWireFrame(frame))
               })
-            } else if (msg.type === 'workspaces' || msg.type === 'sessions' || msg.type === 'history' || msg.type === 'attachment' ||
+            } else if (msg.type === 'agent-team' || msg.type === 'subagents' ||
+                       msg.type === 'workspaces' || msg.type === 'sessions' || msg.type === 'history' || msg.type === 'attachment' ||
                        msg.type === 'search' || msg.type === 'host' || msg.type === 'directories' || msg.type === 'directory-create' ||
                        msg.type === 'workspace-create' || msg.type === 'session-create' || msg.type === 'models' || msg.type === 'commands' || msg.type === 'command-execute' ||
                        msg.type === 'command-options' || msg.type === 'command-select' || msg.type === 'select-model' ||
@@ -3257,6 +3376,7 @@ const plugin = {
             fileTransfers.closeClient(ws).catch((error) => {
               log(`file download cleanup failed: ${error && error.message ? error.message : String(error)}`)
             })
+            fileUploads.closeClient(ws).catch(error => log(`file upload cleanup failed: ${error.message}`))
             log(`client disconnected (id=${id}, remaining=${clients.size})`)
           })
 
@@ -3314,12 +3434,15 @@ const plugin = {
               'images',
               'session-create',
               'session-agent-preset',
+              'agent-team-v1',
+              'subagent-conversations-v1',
               'commands',
               'tasks',
               'goals',
               'schedule-management',
               'plugin-management-v1',
               ...(device ? ['speech-input-v1'] : []),
+              ...(device && options.fileUploadsEnabled ? ['file-upload-v1'] : []),
               'session-cancel',
               'queue-control',
               'session-archive',
@@ -3446,6 +3569,15 @@ const plugin = {
     const disposeScheduleChanged = ctx.on('schedule/changed', () => {
       if (clients.size > 0) broadcastSessionMetadataFrame({ kind: 'schedule-changed' })
     })
+    const disposeSessionStatus = ctx.on('api-session/status', (sessionId, running) => {
+      broadcastSessionMetadataFrame({ kind: 'session-status', sessionId: String(sessionId), running })
+    })
+    const disposeSessionAdded = ctx.on('api-session/added', summary => {
+      broadcastSessionMetadataFrame({ kind: 'session-status', sessionId: String(summary.sessionId), running: summary.running })
+    })
+    const disposeSessionRemoved = ctx.on('api-session/removed', sessionId => {
+      broadcastSessionMetadataFrame({ kind: 'session-status', sessionId: String(sessionId), running: false })
+    })
 
     const disposePluginsChanged = ctx.on('plugin-manager/changed', (change) => {
       if (clients.size > 0) broadcastSessionMetadataFrame({ kind: 'plugins-changed', reason: change?.reason })
@@ -3469,10 +3601,6 @@ const plugin = {
 
     const disposeQuestions = ctx.on('user-questions/request', (request, next) => {
       const sessionId = request?.agent?.id === undefined ? null : String(request.agent.id)
-      // 2026-10-28 探查结论：这条事件通道在本机**从未触发**（诊断行一次都没打印，
-      // 而手机确实收到了卡片）。手机端的提问卡实际走 `dsBotCards` 卡片帧，不走这里。
-      // 保留本段以兼容将来走事件通道的组合，但**不要**再拿它排查「卡片收不到」——
-      // 那种情况查 card-frames.mjs 的订阅与 ds-bot 的卡片源。
       if (!sessionId || !Array.isArray(request.questions) || !hasInteractionClient(sessionId)) return next()
       const rpcId = crypto.randomUUID()
       return new Promise((resolve, reject) => {
@@ -3623,6 +3751,7 @@ const plugin = {
       todos: 'tasks-updated',
       goal: 'goal-updated',
       turnOutline: 'turn-outline-updated',
+      ...TEAM_PROJECTION_KINDS,
     }
     const projectionValues = (values = {}) => Object.fromEntries(
       Object.keys(projectionKinds).map(key => [key, values[key] ?? null]),
@@ -3632,7 +3761,8 @@ const plugin = {
       [key]: value,
     })
     const broadcastProjection = (sessionId, key, value, seq) => {
-      const broadcast = key === 'turnOutline' ? broadcastSessionMetadataFrame : broadcastInteractionFrame
+      const broadcast = key === 'turnOutline' || Object.hasOwn(TEAM_PROJECTION_KINDS, key)
+        ? broadcastSessionMetadataFrame : broadcastInteractionFrame
       broadcast(projectionFrame(sessionId, key, value, seq))
     }
 
@@ -3726,12 +3856,16 @@ const plugin = {
       fileTransfers.dispose().catch((error) => {
         log(`file download disposal failed: ${error && error.message ? error.message : String(error)}`)
       })
+      fileUploads.dispose().catch(error => log(`file upload disposal failed: ${error.message}`))
       disposeUpgrade()
       disposeMgmt()
       disposeMobileV1Admin?.()
       void mobileV1?.dispose()
       disposeEvents()
       disposeScheduleChanged()
+      disposeSessionStatus()
+      disposeSessionAdded()
+      disposeSessionRemoved()
       disposePluginsChanged()
       disposePluginSettingsChanged()
       disposePluginInstallState()

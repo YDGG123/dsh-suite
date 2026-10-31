@@ -14,6 +14,8 @@
 # README/INSTALL 里的 IPA 文件名、大小与 sha256，最后自检“旧值 0 命中”。
 #
 # --ipa 必传，或用 --no-ipa 显式声明本次不发 IPA：不允许静默沿用旧的 sha256。
+# 同步前校验源仓库**白名单内**是否有未提交改动：有就打印文件清单并非零退出（manifest 按
+# 磁盘内容取哈希，未入库内容会让发布仓 HEAD 与 manifest 对不上）。白名单外的 test/、scripts/ 等不挡。
 # 源路径按**调用者当前目录**解析（脚本内部会切到仓库根，但参数的锚点是你敲命令的地方）。
 #
 # 退出码：0 成功；1 源/复制/校验/文档不一致；2 参数非法；4 缺 node（算 sha256 用）
@@ -69,9 +71,46 @@ REPO_ROOT="$PWD"
 GATEWAY_WHITELIST='^(lib/|bin/|helper/|docs/|package\.json$|README\.md$|LICENSE$|PROTOCOL\.md$|cordis\.patch\.yml$)'
 DSBOT_WHITELIST='^(src/(host|shared|client)/|index\.js$|client\.js$|web-search\.js$|package\.json$|README\.md$|LICENSE$|cordis\.patch\.yml$)'
 
+# 「源仓库有未提交改动 = 还没定稿」：白名单内的脏文件一旦被同步，manifest 按磁盘内容取哈希，
+# 而发布仓 HEAD 里没有这些内容，出包时逐条比对必然对不上。2026-10-31 踩过：网关 0.11.1
+# 未入库的 16 个文件把 manifest 从 66 条变成 72 条，ReleaseBot 推送前才发现。
+# 只校验**真正会被复制**的路径（白名单内）；白名单外的 test/、scripts/、锁文件脏了不挡。
+dirty_sync_paths() {
+  local src="$1" whitelist="$2" prefix path entry
+  # src 可能是仓库的子目录（如 ds-bot/ 仓库下的 ds-bot/ 子目录）：`git status` 一律按仓库根
+  # report（`ds-bot/README.md`），必须剥掉 show-prefix 才能和白名单（相对 src）对上。
+  prefix="$(git -C "$src" rev-parse --show-prefix 2>/dev/null || true)"
+  # -z：NUL 分隔。中文/空格路径不被转义；rename 的「源路径」记录没有状态前缀，
+  # 去前缀的展开不会改动它，原样参与白名单匹配。
+  while IFS= read -r -d '' entry; do
+    path="${entry#[ MADRCU?!][ MADRCU?!] }"
+    [ -n "$path" ] || continue
+    path="${path#"$prefix"}"
+    if printf '%s\n' "$path" | grep -qE "$whitelist"; then printf '%s\n' "$path"; fi
+  done < <(git -C "$src" -c core.quotePath=false status --porcelain=v1 -z --untracked-files=all -- .)
+  return 0
+}
+
+require_clean_source() {
+  local name="$1" src="$2" whitelist="$3" found
+  if ! git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    say "  ! $name 源不是 git 仓库：跳过「未提交改动」检查"
+    return 0
+  fi
+  found="$(dirty_sync_paths "$src" "$whitelist" || true)"
+  if [ -n "$found" ]; then
+    printf '❌ %s 有未提交的改动（这些文件会被同步进发布树）：\n' "$name" >&2
+    printf '%s\n' "$found" | sed 's/^/     /' >&2
+    printf '   先提交或 stash 再同步。原因：manifest 按磁盘内容取哈希，未入库的内容会让\n' >&2
+    printf '   发布仓 HEAD 与 manifest 对不上（出包闸门会拒）。\n' >&2
+    exit 1
+  fi
+}
+
 # 先拷临时名 → 逐文件比对 → 再原子替换；失败时旧发布树原封不动。
 copy_plugin() {
   local name="$1" src="$2" whitelist="$3"
+  require_clean_source "$name" "$src" "$whitelist"
   local tmp="plugins/.tmp-$name.$$" list count
   list="$(mktemp "${TMPDIR:-/tmp}/dsh-suite-list.XXXXXX")"
   rm -rf "$tmp"

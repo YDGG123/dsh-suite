@@ -155,7 +155,28 @@ App 侧把「粘贴配对资料 JSON」这条路**删掉**了（面板出 JSON �
 回放结束必发 `{type:'sync.done', instanceId, seq, degraded:{team,cards}, reason}`（`reason`：`resume`/`sync.from`/`caught-up`/`gap`/`unknown-instance`/`snapshot`）。
 错误码：`SYNC_GAP`（窗口够不到）、`SYNC_UNKNOWN_INSTANCE`（instanceId 变了）、`SYNC_RATE_LIMITED`、`SYNC_BAD_REQUEST`、`SYNC_UNAVAILABLE`。
 
-**`sync.done` 的 `degraded`（2026-10-31 加）**：形状与 `ready` 帧一致（`{ team, cards }`，`true` = 降级供数）。
+**`degraded` 的两种形状——按帧类型分，读错会静默失效（2026-10-31 实跑证据）**
+
+| 帧 | `degraded` 形状 | 正确读法 |
+| --- | --- | --- |
+| `ready`、`sync.done`（**界标帧**：一次说明两条流的状态） | **嵌套对象** `{ team: Bool, cards: Bool }` | 读 `degraded.team`（卡片流看 `degraded.cards`） |
+| `snapshot` / `delta` / `order`（**团队流内部帧**：只说团队流自身） | 顶层 `Bool` | 直接读该布尔值 |
+| `card` / `card-snapshot`（**卡片流内部帧**） | 顶层 `Bool` | 直接读该布尔值 |
+
+> ⚠️ **用「顶层 Bool」的方式去读界标帧会静默失效**——不报错、不崩溃，只是永远拿不到值：
+> Swift 里 `(frame["degraded"] as? Bool) ?? current` 对字典恒返回 `current`（保持不动）。
+> 2026-10-31 复刻两个纯函数实跑验证过：**同一帧**喂「读嵌套取 team」的解析能清掉降级，
+> 喂「读顶层 Bool」的解析返回原值不动。iOS 的 `sync.done` 分支最初就是这么写错的
+> （它的 `ready` 分支用对了、`sync.done` 分支用错了），而当时没有测试盯着这条路径——
+> 这就是该坑能活下来的原因。**新增界标帧时，务必按上表选解析函数，并补一条接线用例。**
+
+> 📌 **卡片流是例外：`card` / `card-snapshot` 目前「降级才带 `degraded: true`、正常时省略该字段」**
+> （与团队流的显式布尔不同——团队流在 2026-10-31 已改成每帧都带）。所以客户端**不要**用
+> 「缺字段 = 不动」的语义去记卡片降级，否则会与团队流修复前的「标志粘住」同类：
+> 一旦置上就再没有帧能清掉。要么按「本轮没带即视为恢复正常」处理。这是**已知边界、尚未修改**
+> （改它要动卡片流全部帧路径），另开单。
+
+`sync.done` 的 `degraded`（2026-10-31 加）：`true` = 降级供数。
 它是**回放界标**——到达时回放的数据已全部应用，此刻的 `degraded` 就是最终态，客户端应当采用它。
 为什么需要：客户端在缓存水合时会置 `degraded = true`（诚实），但**静止期没有任何 delta/order 能把它清掉**
 （`maybeOrder` 在排序签名不变时不发帧），于是用户一直看到「实时状态不可用」，直到下一次数据变化——

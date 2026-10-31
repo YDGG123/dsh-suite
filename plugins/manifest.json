@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T10:44:39.793Z",
+  "generatedAt": "2026-10-31T11:09:18.469Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -19,7 +19,7 @@
     "docs/file-cards-mobile-integration.md": "715d74b9d933afa65cd1ac663bad939334f55be2a6b6406a02fad82c6ae6dbd2",
     "docs/file-upload-app-integration.md": "b170b2f00b90cc1a7f6d6bdb43beb8aa544fa3045d0f96ad85890b0f31d462d1",
     "docs/history-segments.md": "389c74cceac3c2650109fc2df4e791a464cbe5064b35b0c324fba922f46db914",
-    "docs/mobile-v1-integration.md": "002cc9cc1160294dcd5f2930670e76783c98fb7d0369c64c91fa6850a4299632",
+    "docs/mobile-v1-integration.md": "3fbc39142598b3b9f9643266a88157e23201d276580c3fbdb32413372d5cc37d",
     "docs/multi-gateway-app-integration.md": "e4a269fedca2ce96098a7ed7a4cab878099c9a81085cdeef97e7ff7e245b0bae",
     "docs/multi-gateway-phase1-acceptance.md": "d5e34e571ccdad4e0f3f6c81909e5f29b745107d40f55446017f456f4adcdd58",
     "docs/multi-gateway-todo.md": "8fdabe04b522743c102210263b33e48266165a2c1587f748bd3fbf122f9c623c",

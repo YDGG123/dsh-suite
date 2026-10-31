@@ -1,0 +1,171 @@
+Orcarness
+Copyright 2026 YDGG123
+
+This product includes software developed at:
+
+  - The Orcarness project (this repository), licensed under the Apache License 2.0.
+    See the LICENSE file for the full license text.
+
+This product is derived from, and includes portions of, the following third-party
+works. Their original copyright notices and license terms are reproduced below and
+remain in effect for those portions. The Apache License 2.0 does not supersede them.
+
+
+================================================================================
+1. iOS client — derived from Clarklevis1995/dsh-mobile
+================================================================================
+
+Orcarness iOS 客户端 (app/ios/) 基于以下项目的代码与结构衍生而来，
+本项目对其进行了 iOS 16 兼容改造、界面重做与功能扩展。
+
+上游项目: https://github.com/Clarklevis1995/dsh-mobile
+
+注意：上游仓库 LICENSE 文件中的版权人为 "Chaofan Li"，其 GitHub 账号为
+Clarklevis1995（提交邮箱 68770750+Clarklevis1995@users.noreply.github.com），
+此处按上游 LICENSE 原文保留其署名。
+
+    MIT License
+
+    Copyright (c) 2026 Chaofan Li
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+
+
+================================================================================
+2. Gateway plugin — derived from Clarklevis1995/dsh-plugin-mobile-gateway
+================================================================================
+
+网关插件 (gateway/) 基于以下项目的代码衍生而来：
+
+    MIT License
+
+    Copyright (c) 2026 Clarklevis1995
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+
+
+================================================================================
+3. Bot team plugin (ds-bot) — Fei2411/DeepSeek-Bot
+================================================================================
+
+ds-bot 插件（plugins/ds-bot/）基于以下项目衍生而来，以 Apache License 2.0 发布。
+完整许可文本见 plugins/ds-bot/LICENSE。
+
+    Copyright 2024-2026 The DeepSeek-Bot Authors
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    上游项目: https://github.com/Fei2411/DeepSeek-Bot
+
+
+================================================================================
+4. DeepSeek Harness (desktop host)
+================================================================================
+
+本项目为 DeepSeek Harness 的移动端客户端与网关。DeepSeek Harness 本身不在本仓库内，
+由用户自行安装。运行时依赖闭包（plugins/_runtime-deps/）中收录的宿主自带 npm 包
+均为 MIT 许可，逐包来源见 plugins/_runtime-deps/NOTICE.md。
+
+
+================================================================================
+5. Bundled third-party assets (design/)
+================================================================================
+
+以下素材随仓库一同分发，各自保留原有许可：
+
+5.1 Untitled UI File Icons — MIT
+    Location: design/file-icons/
+    Source:   https://www.untitledui.com/resources/file-icons
+    Package:  @untitledui/file-icons@0.0.9
+    Note:     72 个格式图标中，27 个直接复用 Untitled UI 原始图标，
+              45 个沿同一几何体系补充绘制。
+
+5.2 Lucide Icons (Composer icons) — ISC
+    Location: design/composer-icons/
+    Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of
+    Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+
+5.3 DeepSeek WebUI agent preset / brand wordmark assets — MIT
+    Location: design/webui-agent-preset/, design/webui-brand-wordmark/
+    Copyright (c) 2026 DeepSeek
+
+5.4 iOS Swift Package dependencies (通过 Swift Package Manager 引入，不随仓库分发源码)
+
+    以下依赖由 Xcode 在构建时从各自上游拉取，本仓库不包含其源码：
+
+    - ChatLayout        2.4.3   https://github.com/ekazaev/ChatLayout
+    - NetworkImage      6.0.1   https://github.com/gonzalezreal/NetworkImage
+    - SwiftMath         1.7.3   https://github.com/mgriebling/SwiftMath
+    - swift-cmark       0.8.0   https://github.com/swiftlang/swift-cmark
+
+    各自的许可条款见其上游仓库。构建产物中会包含这些库的编译结果，
+    分发二进制时需一并遵守其许可要求。
+
+
+================================================================================
+6. Brand assets (NOT covered by any of the above)
+================================================================================
+
+App 名称 "Orcarness"、Orcarness 图标、字标（wordmark）、
+以及本项目自制的品牌类图形素材，均为本项目自有资产。
+
+Apache License 2.0 第 6 条明确不授予商标许可 —— 这意味着：
+
+  - 你可以基于本项目代码发布自己的版本
+  - 但请更换应用名称与图标，不要使用 "Orcarness" 名称或本项目品牌图形发布，
+    以免用户混淆
+
+
+================================================================================
+7. 本项目所做的替换（说明而非法律条款）
+================================================================================
+
+以下上游素材已被本项目完全替换为自制素材，仓库中不再包含：
+
+  - 上游 App 图标、字标、加载动画、宣传图、iPhone 效果图（已全部重制）
+  - 上游的 288 个智能体团队角色头像 SVG（已替换为程序生成的几何头像）
+  - 上游的鲸鱼品牌插画与摄影素材（已移除）
+
+"Bot 头像"（Bot 团队页使用的角色形象）由桌面端 ds-bot 插件在运行时提供，
+不随本仓库分发，因此不涉及本仓库的素材许可。
+
+
+================================================================================
+END OF NOTICE
+================================================================================

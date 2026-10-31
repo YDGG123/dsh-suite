@@ -61,6 +61,9 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
   const SYNC_MAX_DELTAS_LIMIT = 1000
   // 常驻订阅：没有手机连着时也保持 dsBotTeam 订阅，断线期间的事件才进得了回放留窗。
   const releaseRetention = typeof team?.retain === 'function' ? team.retain() : null
+  // 卡片流同样常驻：订阅者抖动（客户端重连）不该把上游 dsBotCards 订阅拆了又建，
+  // 否则每抖一次就重新 subscribe、`/info` 的 cardsServing 在空档采样为 false。
+  const releaseCardsRetention = typeof cards?.retain === 'function' ? cards.retain() : null
   const sockets = new Map()
   // 统一出口：一条帧的序列化字节超过 maxFrameBytes 且客户端声明了分块能力时，
   // 改发 chunk 序列；否则原样发。所有大响应（团队/卡片快照、delta、事件帧）都走这里。
@@ -463,6 +466,14 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
     // ---- 控制面（认证后）：心跳 ping/pong 与断线补增量 sync-resume-v1 ----
     const replyControl = (code, message) => send({ type: 'error', error: { code, message, details: {} } })
     const clampDeltas = value => Math.min(Math.max(Number.isSafeInteger(value) ? value : SYNC_MAX_DELTAS, 1), SYNC_MAX_DELTAS_LIMIT)
+    // 发一帧完整名册（过大时分帧）。caught-up 兜底与正常的首次快照共用。
+    const sendTeamSnapshot = async () => {
+      const snapshot = await team.snapshot()
+      const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
+      send(plan.primary)
+      for (const batch of plan.batches) send(batch)
+      return snapshot.seq ?? 0
+    }
     const resnapshot = async (reason) => {
       if (!team) { replyControl('SYNC_UNAVAILABLE', 'The team feed is not available on this gateway.'); return }
       const snapshot = await team.snapshot()
@@ -487,6 +498,10 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
         return
       }
       for (const frame of answer.frames) send(frame)
+      // caught-up = 客户端声称已追平，但它的本地数据未必真在（换版本后名册缓存可能被作废、
+      // 而 resume 水位是独立存储）。补一帧快照兜底：客户端 applySnapshot 是整体替换，
+      // 内容与服务端一致，不会污染；每次 caught-up 重连只多这一帧。
+      if (answer.frames.length === 0) await sendTeamSnapshot()
       send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? reason : 'caught-up' })
     }
     const handleControl = async (frame) => {
@@ -567,7 +582,8 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
               const answer = team.history(afterSeq, clampDeltas(resume.maxDeltas))
               if (answer.mode === 'ok') {
                 for (const delta of answer.frames) send(delta)
-                snapshotSeqs.team = team.seq ?? 0
+                // caught-up 兜底（理由同 sync.from）：客户端声称追平不等于真有数据。
+                snapshotSeqs.team = answer.frames.length === 0 ? await sendTeamSnapshot() : team.seq ?? 0
                 send({ type: 'sync.done', instanceId: team.instanceId ?? null, seq: team.seq ?? 0, reason: answer.frames.length > 0 ? 'resume' : 'caught-up' })
                 resumed = true
               } else {
@@ -664,6 +680,7 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
         for (const socket of teamSockets.keys()) { try { socket.terminate() } catch {} }
         teamWss.close()
         releaseRetention?.()
+        releaseCardsRetention?.()
         team?.dispose?.()
         cards?.dispose?.()
         await adapter.dispose?.()

@@ -122,6 +122,7 @@ export function createCardFrames({ resolveService = () => null, teamFeed = null,
   let queue = Promise.resolve()
   let disposed = false
   let lastPlaceholders = new Map()
+  let retainers = 0
 
   const emit = frame => {
     for (const listener of subscribers) {
@@ -264,6 +265,24 @@ export function createCardFrames({ resolveService = () => null, teamFeed = null,
     lastPlaceholders = new Map()
   }
 
+  // 常驻订阅：没有手机连着时也保持 dsBotCards 订阅，与 team-feed 的 retain 同口径。
+  // 订阅者抖动（客户端重连、面板刷新）不该把上游订阅拆了又建：那样每抖一次就重新
+  // subscribe、instanceId/head 重算，`/info` 的 cardsServing 在空档采样就是 false，
+  // 卡片流还要重建占位表（真机踩过：2 秒一次的 "subscribed dsBotCards" 连刷）。
+  function retain() {
+    retainers += 1
+    if (retainers === 1) start()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      retainers = Math.max(0, retainers - 1)
+      if (!wanted()) stop()
+    }
+  }
+
+  const wanted = () => subscribers.size > 0 || retainers > 0
+
   return {
     get instanceId() { return instanceId },
     get seq() { return head },
@@ -273,19 +292,21 @@ export function createCardFrames({ resolveService = () => null, teamFeed = null,
       try { return resolveService() != null } catch { return false }
     },
     snapshot,
+    retain,
     subscribe(listener) {
       if (typeof listener !== 'function') throw new TypeError('card frames listener must be a function')
       subscribers.add(listener)
       if (subscribers.size === 1) start()
       return () => {
         subscribers.delete(listener)
-        if (subscribers.size === 0) stop()
+        if (!wanted()) stop()
       }
     },
     dispose() {
       if (disposed) return
       disposed = true
       subscribers.clear()
+      retainers = 0
       stop()
     },
   }

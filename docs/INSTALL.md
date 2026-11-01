@@ -220,6 +220,7 @@ Get-FileHash app\Orcarness-iOS16-20261101-1216.ipa -Algorithm SHA256
 ```
 
 - **预期**：`DA615AE1146E52E31D26E848A8B90DDFA149F283BA80F98648F3016956EEAE14`，大小 `14,891,701` 字节
+- **App 版本**：这一包是 **1.7.12 (66)**（`CFBundleVersion=66`）。装完可在 TrollStore 的应用信息里核对版本号，确认装的不是旧包
 - **对不上** → 重新下载本仓库，别用这个文件
 
 ### 3.2 把 IPA 传到手机

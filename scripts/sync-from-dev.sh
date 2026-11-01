@@ -200,15 +200,36 @@ console.log(JSON.stringify({ name: ipa ? ipa.name : null, sha256: ipa ? ipa.sha2
 JS
 }
 
+# 从 app/ 里唯一的 IPA 读 App 版本（CFBundleShortVersionString + CFBundleVersion）。
+# 读不到就硬失败：文档版本行宁可让本次同步失败，也不能静默缺失/写错——
+# 那会让用户下载了旧包都不知道（2026-11-01 Chief 定）。
+read_app_version() {
+  local f build marketing
+  f="$(ls app/*.ipa 2>/dev/null | head -1)"
+  if [ -z "$f" ]; then printf 'null\nnull\n'; return 0; fi
+  # plutil 对读不到的 key 会把报错打到【stdout】且退出码非 0（macOS 自带版实测），
+  # 所以不能只看输出是否为空——必须同时校验退出码，否则报错文本会被当成版本号写进文档。
+  build="$(unzip -p "$f" 'Payload/DshMobile.app/Info.plist' 2>/dev/null | plutil -extract CFBundleVersion raw - 2>/dev/null)" || { printf '❌ 无法从 %s 读 CFBundleVersion（plutil 退出码非 0）——拒绝改写文档\n' "$f" >&2; exit 1; }
+  marketing="$(unzip -p "$f" 'Payload/DshMobile.app/Info.plist' 2>/dev/null | plutil -extract CFBundleShortVersionString raw - 2>/dev/null)" || { printf '❌ 无法从 %s 读 CFBundleShortVersionString（plutil 退出码非 0）——拒绝改写文档\n' "$f" >&2; exit 1; }
+  # 双保险：值必须是纯数字（版本号），杜绝任何报错文本/带空值混进文档
+  case "$build" in *[!0-9]*|"") printf '❌ %s 的 CFBundleVersion 非纯数字（"%s"）——拒绝改写文档\n' "$f" "$build" >&2; exit 1 ;; esac
+  case "$marketing" in *[!0-9.]*|"") printf '❌ %s 的 CFBundleShortVersionString 异常（"%s"）——拒绝改写文档\n' "$f" "$marketing" >&2; exit 1 ;; esac
+  printf '%s\n%s\n' "$marketing" "$build"
+}
+
 if [ -n "$GATEWAY_SRC" ] && [ ! -f "$GATEWAY_SRC/lib/index.mjs" ]; then die "网关源目录不对：$GATEWAY_SRC"; fi
 if [ -n "$DSBOT_SRC" ] && [ ! -f "$DSBOT_SRC/index.js" ]; then die "ds-bot 源目录不对：$DSBOT_SRC"; fi
 
 if [ "$CHECK_DOCS" -eq 1 ]; then
-  node - <<'JS'
+  APP_VER_OUT="$(read_app_version)" || exit 1
+  VER_MARKETING="$(printf '%s' "$APP_VER_OUT" | sed -n '1p')"
+  VER_BUILD="$(printf '%s' "$APP_VER_OUT" | sed -n '2p')"
+  node - "$VER_MARKETING" "$VER_BUILD" <<'JS'
 const fs = require('fs');
 const crypto = require('crypto');
 const fail = (msg) => { console.error('❌ ' + msg); process.exit(1); };
 const note = (msg) => console.log('  ' + msg);
+const [verMarketing, verBuild] = process.argv.slice(2);
 const manifestPath = 'plugins/manifest.json';
 if (!fs.existsSync(manifestPath)) fail('缺少 plugins/manifest.json');
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -226,6 +247,9 @@ const need = [
   [sha, 'sha256（小写）'],
   [comma(size), '大小（带千分位）'],
 ];
+if (verMarketing && verBuild && verMarketing !== 'null') {
+  need.push([verMarketing + ' (' + verBuild + ')', 'App 版本号']);
+}
 for (const path of ['README.md', 'docs/INSTALL.md']) {
   const text = fs.readFileSync(path, 'utf8');
   for (const [value, label] of need) {
@@ -236,7 +260,7 @@ for (const path of ['README.md', 'docs/INSTALL.md']) {
     fail(`docs/INSTALL.md 里找不到 sha256（大写）：${sha.toUpperCase()}`);
   }
 }
-note(`文档与实际一致：${ipas[0]}  ${comma(size)} B  sha256=${sha.slice(0, 12)}…`);
+note(`文档与实际一致：${ipas[0]}  ${comma(size)} B  sha256=${sha.slice(0, 12)}…  App 版本 ${verMarketing} (${verBuild})`);
 JS
   exit 0
 fi
@@ -252,12 +276,18 @@ elif [ -n "$IPA_SRC" ]; then
   sync_ipa "$IPA_SRC"
 fi
 
+if [ "$NO_IPA" -eq 0 ]; then
+  APP_VER_OUT="$(read_app_version)" || exit 1
+  VER_MARKETING="$(printf '%s' "$APP_VER_OUT" | sed -n '1p')"
+  VER_BUILD="$(printf '%s' "$APP_VER_OUT" | sed -n '2p')"
+fi
+
 say "→ 重建 plugins/manifest.json"
-node - "$OLD_IPA" "$NO_IPA" <<'JS'
+node - "$OLD_IPA" "$NO_IPA" "${VER_MARKETING:-}" "${VER_BUILD:-}" <<'JS'
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const [oldRaw, noIpa] = process.argv.slice(2);
+const [oldRaw, noIpa, verMarketing, verBuild] = process.argv.slice(2);
 const old = JSON.parse(oldRaw);
 const comma = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
@@ -327,8 +357,20 @@ if (ipa) {
   const size = fs.statSync(path.join('app', ipa.name)).size;
   const newShaUpper = ipa.sha256.toUpperCase();
   const files = ['README.md', 'docs/INSTALL.md'];
+  const vs = (verMarketing && verBuild && verMarketing !== 'null' && verBuild !== 'null')
+    ? `${verMarketing} (${verBuild})` : null;
+  const oldVerLines = {};
   for (const file of files) {
     let text = fs.readFileSync(file, 'utf8');
+    // 版本行：先抓旧行（供「旧版本行 0 命中」自检），再替换；老文档没有就锚定插入。
+    let oldVerLine = null;
+    if (vs) {
+      const mVer = file === 'README.md'
+        ? text.match(/^  App 版本: \*\*[^\n]*\n/m)
+        : text.match(/^- \*\*App 版本\*\*[^\n]*\n/m);
+      if (mVer) oldVerLine = mVer[0].replace(/\n$/, '');
+    }
+    if (oldVerLine) oldVerLines[file] = oldVerLine;
     if (old.name && old.name !== ipa.name) text = text.split(old.name).join(ipa.name);
     if (old.sha256 && old.sha256 !== ipa.sha256) {
       text = text.replace(new RegExp(old.sha256, 'gi'), (m) => (m === m.toUpperCase() ? newShaUpper : ipa.sha256));
@@ -339,6 +381,26 @@ if (ipa) {
         if (value !== old.size) return m;
         return m.includes(',') ? comma(size) : String(size);
       });
+    }
+    if (vs) {
+      const die = (msg) => { console.error('❌ ' + msg); process.exit(1); };
+      if (file === 'README.md') {
+        const line = `  App 版本: **${vs}**（CFBundleVersion=${verBuild}，装完可在 TrollStore 应用信息里核对）`;
+        if (oldVerLine) text = text.replace(oldVerLine, line);
+        else {
+          const shaLine = new RegExp(`^  sha256: ${ipa.sha256}$`, 'm');
+          if (!shaLine.test(text)) die('README.md 里找不到 sha256 行，无法插入版本行');
+          text = text.replace(shaLine, (m) => m + '\n' + line);
+        }
+      } else {
+        const line = `- **App 版本**：这一包是 **${vs}**（\`CFBundleVersion=${verBuild}\`）。装完可在 TrollStore 的应用信息里核对版本号，确认装的不是旧包`;
+        if (oldVerLine) text = text.replace(oldVerLine, line);
+        else {
+          const expLine = /^- \*\*预期\*\*[^\n]*$/m;
+          if (!expLine.test(text)) die('docs/INSTALL.md 里找不到「预期」行，无法插入版本行');
+          text = text.replace(expLine, (m) => m + '\n' + line);
+        }
+      }
     }
     fs.writeFileSync(file, text);
   }
@@ -360,6 +422,15 @@ if (ipa) {
     if (!text.includes(ipa.sha256) && !text.includes(newShaUpper)) {
       console.error(`❌ ${file} 里没有新 sha256`);
       process.exit(1);
+    }
+    if (vs) {
+      if (!text.includes(vs)) { console.error(`❌ ${file} 里没有 App 版本号：${vs}`); process.exit(1); }
+      if (!text.includes('CFBundleVersion=' + verBuild)) { console.error(`❌ ${file} 里没有 CFBundleVersion=${verBuild}`); process.exit(1); }
+      const oldLine = oldVerLines[file];
+      if (oldLine && oldLine !== oldLine.replace(String(vs), '') && text.includes(oldLine)) {
+        console.error(`❌ ${file} 里仍残留旧版本行：${oldLine}`);
+        process.exit(1);
+      }
     }
   }
   console.log('  IPA：' + ipa.name + '  ' + comma(size) + ' B  sha256=' + ipa.sha256);

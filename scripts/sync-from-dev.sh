@@ -426,11 +426,13 @@ if (ipa) {
     if (vs) {
       if (!text.includes(vs)) { console.error(`❌ ${file} 里没有 App 版本号：${vs}`); process.exit(1); }
       if (!text.includes('CFBundleVersion=' + verBuild)) { console.error(`❌ ${file} 里没有 CFBundleVersion=${verBuild}`); process.exit(1); }
-      const oldLine = oldVerLines[file];
-      if (oldLine && oldLine !== oldLine.replace(String(vs), '') && text.includes(oldLine)) {
-        console.error(`❌ ${file} 里仍残留旧版本行：${oldLine}`);
+      // 不变式：文档里每一行「App 版本」都必须包含当前版本号（同版本重出时旧行==新行，天然满足）。
+      // 只校验「捕获到的那一行」不够——历史残留多出来的行会漏过（2026-11-02 build 69 实测）。
+      const verLines = text.split('\n').filter((l) => l.includes('App 版本'));
+      if (verLines.length !== 1 || !verLines[0].includes(vs)) {
+        console.error(`❌ ${file} 的「App 版本」行异常（条数 ${verLines.length}，应恰 1 条且含 ${vs}）：${JSON.stringify(verLines)}`);
         process.exit(1);
-      }
+        }
     }
   }
   console.log('  IPA：' + ipa.name + '  ' + comma(size) + ' B  sha256=' + ipa.sha256);

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T04:57:09.346Z",
+  "generatedAt": "2026-11-02T06:21:30.229Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -230,7 +230,7 @@
     }
   },
   "ipa": {
-    "name": "Orcarness-iOS16-20261102-1255-e36d992f.ipa",
-    "sha256": "e36d992feddcfb5e5412ec3bf0fd2a00a756c582fb58f6c26878eb0c5c397fcb"
+    "name": "Orcarness-iOS16-20261102-1420-131ac0bc.ipa",
+    "sha256": "131ac0bc7d0cf00fd839bd712d55a90c6eee5904de8ef3a7a86af9366a8353b2"
   }
 }

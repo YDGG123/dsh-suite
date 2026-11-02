@@ -348,7 +348,15 @@ function buildWireEvent(session, event) {
           type: 'user/message',
           text: textOf(d.content || []),
           source: d.source && d.source.kind,
-          ...(typeof d.id === 'string' && d.id ? { raw: { id: d.id } } : {}),
+          // 2026-11-02：`source` 字段只保留 kind 字符串（既有消费者按字符串读，契约不能动），
+          // 但群聊成员 relay post 的 role/form/senderName/roomId 会因此全丢 —— 实时流里认不出
+          // 「成员发言」，名字也拿不到（用户报「群聊只看到工具调用记录」的根因）。
+          // 这里把**完整 source 对象**额外放进 `raw.source`：纯加字段，`raw` 本就是宽松 JsonValue，
+          // 消费方按键读取（KMP ConversationProjection.kt:295 读 `raw.source`；:222/:261 读 `raw.id`），
+          // 缺这个键时行为与改动前逐字节一致（旧客户端/旧形态不受影响）。
+          ...(typeof d.id === 'string' && d.id
+            ? { raw: { id: d.id, ...(d.source && typeof d.source === 'object' ? { source: d.source } : {}) } }
+            : {}),
           ...(images.length ? { images } : {}),
           ...(files.length ? { files } : {}),
         },

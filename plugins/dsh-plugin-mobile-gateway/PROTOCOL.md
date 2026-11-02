@@ -665,7 +665,7 @@ let image = [
 | `session-archive` | `sessionId` | 将 Session 加入 Host 的完整归档集合（隐藏但不删除） |
 | `session-rename` | `sessionId`, `title` | 写入用户指定的持久化 Session 名称 |
 | `history` | `sessionId`, `beforeSeq?`, `historyFormatVersion?`, `maxMessages?`, `maxBytes?`, `view?` | 历史事件页（见下） |
-| `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节 |
+| `attachment` | `sessionId`, `attachmentId` | 读取历史中属于该会话的图片字节。客户端只发 id；网关负责换成宿主要求的**嵌套**严格形态 `{ sessionId, attachment: { attachmentId, mediaType, bytes, width, height } }`（宿主 strict codec 会拒平铺形态）；网关从未见过该 id 时回 `attachment/unknown-ref` |
 | `file-list` | `sessionId`, `path?`, `requestId?` | 列出会话工作目录内的一层文件与文件夹 |
 | `file-resolve` | `sessionId`, `path`, `requestId` | 将文件引用解析为工作目录相对路径及预览元数据；需 `file-references-v1` |
 | `file-download-open` | `sessionId`, `path`, `requestId` | 打开一个工作目录内的普通文件下载 |

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T13:56:03.786Z",
+  "generatedAt": "2026-11-02T14:28:36.011Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -33,6 +33,7 @@
     "docs/typert-remote-gateway-feature-checklist.md": "b89ea99d516ab28992f3c5bbfa05b6c0185133bc652d4ced3dd39cb53b1a0e06",
     "docs/voice-input-implementation.md": "518213c07071ab781c6c4b5ec0ec48fb12e4d0c5dc63f552e4d570c61f6bb51a",
     "helper/dsh_mobile_gateway_helper.py": "249181e004ee3d343e59e17bf04d4708c4c2419188e1e28f14b02eb6526ef61e",
+    "lib/attachment-refs.mjs": "cbaaa592b0f47938cbe67ddc0d6c9c643f2dae88296b3f2d002643a3372d9c92",
     "lib/client.js": "1b8aabb2927df072c57a355fd68659d7f6ae0704b516ed114b0752ddc3ae2005",
     "lib/cloudflare-tunnel.mjs": "574328c7f9656b60dbf27a3cc5a96d93526a1f81d2ade6ded1f66a0d0926305b",
     "lib/cloudflared-binary.mjs": "472857a9cad64091655af3a551cce9d81bd23d641595bf1afd2746b74fcf03f4",
@@ -44,7 +45,7 @@
     "lib/gateway-state.mjs": "971fbc1052ee49a1585db7124c20f16b36dddfe4c49759e4a6c48ca13b553c75",
     "lib/gateway-tools.mjs": "782adadf14bd6e6f1822d81bdec45ea36ff47bc1627de2cbe4c3e04f0b38215e",
     "lib/history-segments.mjs": "9a539728fcfb62e17840416d16f44de8762747d9f113eead75d1d4fb2c6ada4a",
-    "lib/index.mjs": "9603a28b13322f2344e844f6969a3d285145f35af11a017e06f6d1f9105a5187",
+    "lib/index.mjs": "98c363a63cdbd8172f56f3e34bb5bf6827b12bafe30c9ee78b96795fdf4c6f32",
     "lib/mobile-v1/actions.mjs": "e2dd001ae28016149e656fcf14279f876d02365658ee293b3fb44c7227565f5e",
     "lib/mobile-v1/adapter.mjs": "0b0ab2b4bf23a04d899946106626ede77459b9efa53051f22cd3ffeea09168dc",
     "lib/mobile-v1/admin.mjs": "ebee2338a6db5866bc4c609d7ba5fd077adf0828675417f3266a958f87e1ada3",
@@ -70,8 +71,8 @@
     "lib/web-restart.mjs": "a745e830b0a1af5ffc1d04f116a303c78f1f9c9b73b1a8cec69bdc16b18b24e5",
     "lib/wire-json.mjs": "7297bcd1505fadb90e16fc6c0f8685488ccfff063fc23e30fad175153c11a04d",
     "LICENSE": "567621ef92678d9a79fb0de4ca7f3ccea469f9a4a0f2e78f4785555b98f4fd8a",
-    "package.json": "fbc4ccb404c46235007f5afdc5c1c2c8c3f88ce932a1ef442ef81626c5551ab5",
-    "PROTOCOL.md": "7d9727095e8c6a6c32afd2f328b669b246c0322742914cf94d474525ede53a9f",
+    "package.json": "1e3c6f4215c13322ebe9789c9a20ce328bbe7e66b28b8448cf164b071fe846ee",
+    "PROTOCOL.md": "d08c3d90e8066573a19f6d07269194a5c209e5ce4f5944558a92c0bbef806da2",
     "README.md": "d18359008359e8555fa8de90fc77069191e8b9a3c4603a31b5d545077999c4c5"
   },
   "dsBot": {

@@ -1,6 +1,7 @@
 import { stringifyWireFrame } from './wire-json.mjs'
 import { createHistoryOwner } from './history-segments.mjs'
 import { assistantFinish, failureDetails, toolResultDetails, turnReasonDetails } from './session-event-details.mjs'
+import { attachmentRefOf, rememberContentRefs, rememberEventRefs } from './attachment-refs.mjs'
 // dsh-plugin-mobile-gateway — persistent Host plugin.
 //
 // Two directions:
@@ -343,6 +344,9 @@ function buildWireEvent(session, event) {
     case 'user/message': {
       const images = imagesOf(d.content || [])
       const files = filesOf(d.content || [])
+      // The mobile client only keeps attachmentIds; remember the full reference so
+      // `type:"attachment"` can forward the nested shape the Host demands.
+      rememberContentRefs(d.content || [])
       return Object.assign(base, {
         event: {
           type: 'user/message',
@@ -368,6 +372,7 @@ function buildWireEvent(session, event) {
       let reasoning = ''
       const toolCalls = []
       const images = imagesOf(blocks)
+      rememberContentRefs(blocks)
       for (const block of blocks) {
         if (!block) continue
         if (block.type === 'text' && typeof block.text === 'string') text += block.text
@@ -1213,6 +1218,10 @@ const HISTORY_DEFAULT_MAX_BYTES = 4 * 1024 * 1024 // 4 MiB per frame
 // Keep the newest indivisible message even when it alone exceeds this budget.
 const HISTORY_OPENING_MAX_BYTES = 256 * 1024
 const HISTORY_TOOL_RESULT_MAX_CHARS = 2000 // per text block in conversation view
+// `type:"attachment"` needs the full image reference, which the client never sends.
+// When the id is not in the in-process index (gateway restarted, client kept a cached
+// transcript), one bounded history read recovers it instead of failing the image.
+const ATTACHMENT_REF_RECOVERY_MESSAGES = 40
 
 function eventBytes(event) {
   return Buffer.byteLength(JSON.stringify(event), 'utf8')
@@ -1303,6 +1312,10 @@ function historyPage(value, msg) {
   const maxBytes = Number.isSafeInteger(msg.maxBytes) && msg.maxBytes > 0 ? msg.maxBytes : HISTORY_DEFAULT_MAX_BYTES
   const trim = msg.view === 'conversation'
   const capped = capHistoryEvents(rawEvents, maxBytes, trim)
+  // History pages are the only place a client can learn about images it never saw
+  // arrive live (fresh install, restart, older scroll-back) — index their references
+  // here too, otherwise `type:"attachment"` would come back as unknown-ref.
+  rememberEventRefs(capped.events)
   // An all-hidden page still needs a cursor so callers can reach older text.
   const oldest = capped.events[0]?.seq ?? rawEvents[0]?.seq
   // hasMore without a cursor is a trap: the mobile history reducer fails the whole
@@ -1606,9 +1619,34 @@ async function handleQuery(api, host, agentDefaultModel, msg, pluginContext) {
     if (!attachmentId) {
       return { kind: 'error', code: 'bad-request', message: 'attachment requires an attachmentId', requestType: 'attachment', sessionId: sessionId.value }
     }
+    // Host contract: `session/attachment` takes a NESTED, strict reference
+    //   { sessionId, attachment: { attachmentId, mediaType, bytes, width, height } }
+    // The mobile client only ever sends the id, so the gateway must echo a reference it
+    // already forwarded (live event or history page). Sending the old flat
+    // { sessionId, attachmentId } shape fails boundary validation on every image
+    // (`gateway/input-invalid ... wire field "request"`), and silently degrading to it
+    // would just reproduce that bug — so an unknown id is reported as its own error.
+    let reference = attachmentRefOf(attachmentId)
+    if (!reference) {
+      // The client may render an image it learned about before this process started
+      // (cached transcript, gateway restart). One bounded history read on this error
+      // path is enough to recover; a miss after that stays a clean unknown-ref.
+      const history = await proxyQuery(api, 'history', api.sessions.history.bind(api.sessions), {
+        sessionId: sessionId.value, maxMessages: ATTACHMENT_REF_RECOVERY_MESSAGES,
+      })
+      if (history.kind === 'history') {
+        rememberEventRefs(history.events)
+        reference = attachmentRefOf(attachmentId)
+      }
+    }
+    if (!reference) {
+      log(`attachment unknown ref: session=${sessionId.value} attachment=${attachmentId}`)
+      return { kind: 'error', code: 'attachment/unknown-ref', requestType: 'attachment', sessionId: sessionId.value,
+        message: `attachment ${attachmentId} is unknown to this gateway; open the conversation again (loads its history) and retry` }
+    }
     const frame = await proxyQuery(api, 'attachment', api.sessions.attachment.bind(api.sessions), {
       sessionId: sessionId.value,
-      attachmentId,
+      attachment: { ...reference },
     })
     if (frame.kind === 'attachment') frame.sessionId = sessionId.value
     return frame

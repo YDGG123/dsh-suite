@@ -3260,6 +3260,51 @@ const plugin = {
 
             if (msg.type === 'ping') {
               ws.send(stringifyWireFrame({ kind: 'pong', at: Date.now() }))
+            } else if (msg.type === 'bridge-session') {
+              // 自愈补发（Chief 2026-11-02 定，**拉取式**；ReleaseBot 实现）：
+              // 客户端在「网关已认证 + 本地无 bridge 会话」时主动请求一次，网关签发一次并回一条 `bridge-session`。
+              // 为什么不做成"每次 hello 常驻签发"：issueSession 会轮换 access/refresh hash（auth.mjs:60-66），
+              // ACCESS_TTL 只有 15 分钟 ⇒ 常驻签发会让 App 刚拿到的 token 立刻失效（401 风暴），
+              // 且 issueSessionForName 按设备名建记录、上限 100 台，会堆设备到 DEVICE_LIMIT。
+              // 通道：本请求只能在 control 通道发（conversation 通道在 3253-3259 的 wrong-channel 守卫处被拒）。
+              if (!ws.deviceId) {
+                sendFrame({ kind: 'error', code: 'authentication-required', requestType: 'bridge-session',
+                  ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
+                  message: 'Bridge session reissue requires a paired device' })
+                return
+              }
+              if (ws.lastBridgeSessionIssueAt && Date.now() - ws.lastBridgeSessionIssueAt < 5000) {
+                sendFrame({ kind: 'error', code: 'rate-limited', requestType: 'bridge-session',
+                  ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
+                  message: 'Bridge session reissue requested too frequently' })
+                return
+              }
+              void (async () => {
+                let bridgeSession = null
+                try {
+                  const handle = mobileV1 ? await mobileV1.ready : null
+                  const origin = handle ? normalizeMobileV1Origin(handle.url || '') : ''
+                  bridgeSession = handle
+                    ? await handle.issueSessionForDevice({ name: device?.name, serverUrl: origin })
+                    : null
+                } catch (error) {
+                  log(`bridge-session reissue failed: ${error && error.message ? error.message : String(error)}`)
+                }
+                if (!bridgeSession) {
+                  sendFrame({ kind: 'error', code: 'bridge-session-unavailable', requestType: 'bridge-session',
+                    ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
+                    message: 'mobile-v1 is not ready; cannot reissue a bridge session' })
+                  return
+                }
+                ws.lastBridgeSessionIssueAt = Date.now()
+                log(`bridge-session reissued on request device=${String(ws.deviceId).slice(0, 8)}`)
+                // 响应帧用 `kind:'bridge-session'`：App 明确接三种 kind，其中这是拉取式主路径。
+                // 不用 hello 承载（hello 每连必发，容易被后来者误解成"该在 hello 里常驻签发"）；
+                // 更不用 paired（带 token 语义，伪造会清掉 App 的 bearerToken）。
+                sendFrame({ kind: 'bridge-session',
+                  ...(typeof msg.requestId === 'string' ? { requestId: msg.requestId } : {}),
+                  bridgeSession })
+              })()
             } else if (FILE_UPLOAD_REQUEST_TYPES.has(msg.type)) {
               if (!ws.deviceId) {
                 sendFrame({ kind: 'error', code: 'authentication-required', requestType: msg.type,

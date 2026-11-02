@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T11:30:10.541Z",
+  "generatedAt": "2026-11-02T00:07:26.001Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -44,7 +44,7 @@
     "lib/gateway-state.mjs": "971fbc1052ee49a1585db7124c20f16b36dddfe4c49759e4a6c48ca13b553c75",
     "lib/gateway-tools.mjs": "782adadf14bd6e6f1822d81bdec45ea36ff47bc1627de2cbe4c3e04f0b38215e",
     "lib/history-segments.mjs": "9a539728fcfb62e17840416d16f44de8762747d9f113eead75d1d4fb2c6ada4a",
-    "lib/index.mjs": "93d30a1756bc7f6067ccdd61131719939354839a98df5f7f2c7a3c5705d7a64b",
+    "lib/index.mjs": "d075b6aed4e93aaddd5ea4114ac11b8604fed8039039536bc9bbc554c8061e6a",
     "lib/mobile-v1/actions.mjs": "e2dd001ae28016149e656fcf14279f876d02365658ee293b3fb44c7227565f5e",
     "lib/mobile-v1/adapter.mjs": "0b0ab2b4bf23a04d899946106626ede77459b9efa53051f22cd3ffeea09168dc",
     "lib/mobile-v1/admin.mjs": "ebee2338a6db5866bc4c609d7ba5fd077adf0828675417f3266a958f87e1ada3",
@@ -59,7 +59,7 @@
     "lib/mobile-v1/project-avatar.mjs": "6e1f8398e1769dbaf14e889e75a81e1804b25476cdbf02fa2bb81ecf53674737",
     "lib/mobile-v1/projection.mjs": "cecd9d0ed8088132a2a6f7b7bffc705fd13138880467b5d353455cd8bb3f895d",
     "lib/mobile-v1/public-url.mjs": "6f1875909e68359f1f21ba3789db5d2b1cf55ad3336351e2fa3f72c807c3ee1c",
-    "lib/mobile-v1/server.mjs": "631cae4a968a1ebdeac2a9a04debd2077201fb0ddd515bc930e0d5b0e092ee96",
+    "lib/mobile-v1/server.mjs": "6f185753b08366f8a5fdf47e72b0ade170e9f4e26479decb6fea082a0eb0a46e",
     "lib/mobile-v1/team-feed.mjs": "604c92337ad68529b61bdf44c610c60803abddfb910068adfe9b92023ab198f4",
     "lib/plugin-management.mjs": "a914e234dcc087a0ea67c0e1f9ccb4071871e3c11c08eee8eca5cd43f55dde60",
     "lib/public-endpoint-check.mjs": "2119ebc4a92d1ef37408f6827a96189b49a2ab71fec73043753e3924e0df187a",

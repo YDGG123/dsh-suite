@@ -467,7 +467,12 @@ export async function createMobileV1({ home, config = {}, adapter, team = null, 
     const replyControl = (code, message) => send({ type: 'error', error: { code, message, details: {} } })
     const clampDeltas = value => Math.min(Math.max(Number.isSafeInteger(value) ? value : SYNC_MAX_DELTAS, 1), SYNC_MAX_DELTAS_LIMIT)
     // 发一帧完整名册（过大时分帧）。caught-up 兜底与正常的首次快照共用。
+    // 防御性（2026-10-31，iOSCoder 交叉终审观察到本函数缺 `if (!team)`，与同文件的 resnapshot 不一致）：
+    // 实测**当前无触发路径** —— 两个调用点各自都在 `if (team)` 分支内（:494 的 replayFrom 入口守卫、
+    // :575/:581 的 auth resume 分支），且 `team` 是 createMobileV1 的形参、闭包内从不重赋值。
+    // 所以这里**不写没有验证手段的 return**，而是留一行可观测日志：真被调到时在日志里现形。
     const sendTeamSnapshot = async () => {
+      if (!team) { log('mobile-v1 team: snapshot requested with no feed'); return 0 }
       const snapshot = await team.snapshot()
       const plan = typeof team.splitSnapshot === 'function' ? team.splitSnapshot(snapshot) : { primary: snapshot, batches: [] }
       send(plan.primary)

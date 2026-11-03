@@ -2690,6 +2690,13 @@ const plugin = {
         approvalCount += 1
       }
       log(`interaction replay: trigger=${trigger} channel=${ws.mobileChannel} filtered=${Boolean(sessionId)} recipients=${recipients.length} questions=${questionCount} approvals=${approvalCount}`)
+      // 76④ 对账结束标记：客户端把 replay 里出现过的 rpcId 记账后，用本帧把
+      // 「本机有、replay 里没有」的 pending 卡就地清掉（宿主注册表已无 ⇒ 过期卡）。
+      // 必须在 replay 帧之后发给同一批 recipient——没有这个标记，客户端按红线
+      // 一张卡都不清（宿主重启/广播过滤吃掉 resolved 帧时卡片就永远挂着）。
+      for (const recipient of recipients) {
+        if (recipient.readyState === 1) recipient.send(stringifyWireFrame({ kind: 'interaction-replay-end' }))
+      }
       return { questionCount, approvalCount }
     }
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T07:54:31.623Z",
+  "generatedAt": "2026-11-03T09:32:01.716Z",
   "note": "install.sh / install.ps1 用这里的哈希校验“复制是否完整、是否被改动”。改插件后请重跑 sync-from-dev.sh 重建。",
   "dshPluginMobileGateway": {
     "bin/setup-ip.mjs": "86ffe347b7560f9a009cae61764049e32647be87d3513ba281661f5586b36eac",
@@ -45,7 +45,7 @@
     "lib/gateway-state.mjs": "971fbc1052ee49a1585db7124c20f16b36dddfe4c49759e4a6c48ca13b553c75",
     "lib/gateway-tools.mjs": "782adadf14bd6e6f1822d81bdec45ea36ff47bc1627de2cbe4c3e04f0b38215e",
     "lib/history-segments.mjs": "9a539728fcfb62e17840416d16f44de8762747d9f113eead75d1d4fb2c6ada4a",
-    "lib/index.mjs": "98c363a63cdbd8172f56f3e34bb5bf6827b12bafe30c9ee78b96795fdf4c6f32",
+    "lib/index.mjs": "8c87283de1cc47a40ec582e739da83fd9ae63214e23d70a6c7d301411bff4eb7",
     "lib/mobile-v1/actions.mjs": "e2dd001ae28016149e656fcf14279f876d02365658ee293b3fb44c7227565f5e",
     "lib/mobile-v1/adapter.mjs": "0b0ab2b4bf23a04d899946106626ede77459b9efa53051f22cd3ffeea09168dc",
     "lib/mobile-v1/admin.mjs": "ebee2338a6db5866bc4c609d7ba5fd077adf0828675417f3266a958f87e1ada3",
@@ -231,7 +231,7 @@
     }
   },
   "ipa": {
-    "name": "Orcarness-iOS16-20261103-1550-174f4084.ipa",
-    "sha256": "174f4084784f60f0c8f735a7cdaaff6c527fef8aab6ac68f6fca6b94590a7bec"
+    "name": "Orcarness-iOS16-20261103-1718-9b56eaa2.ipa",
+    "sha256": "9b56eaa271b0fc1331a87c9f10cb49b2cb3998e1263136346a5458856eeba4ec"
   }
 }

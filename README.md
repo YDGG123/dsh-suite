@@ -33,9 +33,9 @@
 
 ```
 app/                          # 未签名 IPA（TrollStore 直接装）
-  Orcarness-iOS16-20261104-1416-404c0c91.ipa   (14,924,561 B)
-  sha256: 404c0c91c740e4b4735c29356bca346f83b96fc55f3115caa653b98428321b4e
-  App 版本: **1.7.12 (81)**（CFBundleVersion=81，装完可在 TrollStore 应用信息里核对）
+  Orcarness-iOS16-20261106-0800-896a3872.ipa   (28,387,203 B)
+  sha256: 896a3872eb3f7d0b72c6cb393da7569b44a01483f123c0dbc7fb713387416131
+  App 版本: **1.7.15 (82)**（CFBundleVersion=82，装完可在 TrollStore 应用信息里核对）
 plugins/
   dsh-plugin-mobile-gateway/  # 网关插件（含产物，装完即用；无需 npm/构建）
   ds-bot/                     # ds-bot fork（含 client.js 产物）

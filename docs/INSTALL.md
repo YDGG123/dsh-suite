@@ -211,16 +211,16 @@ bash scripts/install.sh --verify-only
 
 ### 3.1 拿到 IPA
 
-仓库里就有：`app/Orcarness-iOS16-20261106-1140-5a0e1bb1.ipa`
+仓库里就有：`app/Orcarness-iOS16-20261106-1907-af7e52fc.ipa`
 
 建议执行（这是自动可查的完整性检查，AI 助手请执行）：在仓库根目录
 
 ```powershell
-Get-FileHash app\Orcarness-iOS16-20261106-1140-5a0e1bb1.ipa -Algorithm SHA256
+Get-FileHash app\Orcarness-iOS16-20261106-1907-af7e52fc.ipa -Algorithm SHA256
 ```
 
-- **预期**：`3AB08FE67678F6A629A4F9E1B3F4A9C63C44E3D9D392FFA09310A293CD32E328`，大小 `28,667,898` 字节
-- **App 版本**：这一包是 **1.0.0 (85)**（`CFBundleVersion=85`）。装完可在 TrollStore 的应用信息里核对版本号，确认装的不是旧包
+- **预期**：`CB60C08B1BB89A334A5AB5846B54EE70FF2BC9E48DE18DA210346EE0D12130F2`，大小 `28,675,886` 字节
+- **App 版本**：这一包是 **1.0.0 (87)**（`CFBundleVersion=87`）。装完可在 TrollStore 的应用信息里核对版本号，确认装的不是旧包
 - **对不上** → 重新下载本仓库，别用这个文件
 
 ### 3.2 把 IPA 传到手机
@@ -256,7 +256,7 @@ Get-FileHash app\Orcarness-iOS16-20261106-1140-5a0e1bb1.ipa -Algorithm SHA256
 > **只有 1.3 发现手机没有巨魔时才用这节。** 代价：**要 Apple ID、7 天过期需重签**。
 
 1. 电脑装 [Sideloadly](https://sideloadly.io/)，数据线连 iPhone
-2. 把 `app/Orcarness-iOS16-20261106-1140-5a0e1bb1.ipa` 拖进 Sideloadly，填 Apple ID → Start
+2. 把 `app/Orcarness-iOS16-20261106-1907-af7e52fc.ipa` 拖进 Sideloadly，填 Apple ID → Start
 3. 手机上信任证书：设置 → 通用 → VPN 与设备管理 → 开发者 App → 信任
 4. **7 天到期**后 App 打不开 → 同样方式重签一次；**配对信息不会丢**
 
@@ -400,8 +400,8 @@ iOS 只在启动时读语言设置：按 App 内提示**退出再打开**（设�
 
 ```
 app/
-  Orcarness-iOS16-20261106-1140-5a0e1bb1.ipa   28,667,898 B
-  sha256 3ab08fe67678f6a629a4f9e1b3f4a9c63c44e3d9d392ffa09310a293cd32e328
+  Orcarness-iOS16-20261106-1907-af7e52fc.ipa   28,675,886 B
+  sha256 cb60c08b1bb89a334a5ab5846b54ee70ff2bc9e48de18da210346ee0d12130f2
 plugins/
   dsh-plugin-mobile-gateway/   0.10.4   （含 lib/ 产物，装完即用）
   ds-bot/                      0.2.0    （含 client.js 产物）
